@@ -1,0 +1,37 @@
+# Optimized cone detection and tracking configuration
+# This is an example configuration file demonstrating hot-reload capability
+# Copy this file to cone_config.yaml and edit as needed
+
+# Example: cp cone_config.yaml.example cone_config.yaml
+
+tracking:
+  # FIX PRINCIPAL: Aumentar timeout para evitar deleção prematura de tracks
+  lost_timeout: 3.0              # 3 segundos (90 frames a 30fps) ao invés de 0.6
+  
+  # Facilitar associação para cones em movimento
+  association_max_distance: 250   # 250px ao invés de 140px
+  
+  # Confirmar mais rápido (scores estão bons: 0.55-0.65)
+  min_frames_for_confirm: 4       # 4 frames ao invés de 6
+  
+  # Suavização mais responsiva
+  ema_alpha: 0.35                # 0.35 ao invés de 0.25
+  
+  # Grace period maior para tracks confirmados
+  grace_frames: 20               # 20 frames ao invés de 12
+  
+  score_window: 10
+  max_tracks: 8
+
+geometry:
+  # Threshold de confirmação mais permissivo
+  confirm_avg_score: 0.50        # 0.50 ao invés de 0.55
+  
+  # Aceitar detecções com score ligeiramente menor
+  min_frame_score: 0.30          # 0.30 ao invés de 0.35
+
+debug:
+  show_windows: true
+  show_mask: true
+  draw_suspects: true            # Mostrar tracks em estado SUSPECT (amarelo)
+  show_rejection_reason: true    # Mostrar motivo de rejeições

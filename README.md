@@ -111,7 +111,18 @@ python3 test7.py
 
 ### Hot-Reload Configuration
 
-The system automatically detects changes to `cone_config.yaml` and reloads the configuration in real-time. This allows you to tune parameters without restarting the application:
+The system automatically detects changes to `cone_config.yaml` and reloads the configuration in real-time. This allows you to tune parameters without restarting the application.
+
+**Setup:**
+```bash
+# Copy the example configuration
+cp cone_config.yaml.example cone_config.yaml
+
+# Run the application
+python3 test7.py
+```
+
+**Using Hot-Reload:**
 
 1. Run the application: `python3 test7.py`
 2. Edit `cone_config.yaml` in another terminal/editor
