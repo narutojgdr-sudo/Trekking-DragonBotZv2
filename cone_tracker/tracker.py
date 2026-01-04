@@ -178,7 +178,7 @@ class MultiConeTracker:
             
             if frames >= min_frames and avg >= threshold:
                 if t.state != ConeState.CONFIRMED:
-                    # LOG when confirma
+                    # LOG when confirmed
                     logger.info(f"✅ Track {t.track_id} CONFIRMADO! frames={frames}, avg={avg:.2f}")
                 t.state = ConeState.CONFIRMED
             else:
