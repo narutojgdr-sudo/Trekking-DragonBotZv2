@@ -127,3 +127,7 @@ cone_config.yaml
 cone_hist.npy
 *.mp4
 *.avi
+
+# Streamlit
+.streamlit/secrets.toml
+streamlit_app/.streamlit/secrets.toml
