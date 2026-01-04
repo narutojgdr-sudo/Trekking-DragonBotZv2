@@ -129,3 +129,39 @@ def save_config(config: Dict[str, Any], path: str = "cone_config.yaml") -> None:
         logger.info(f"Config saved to {path}")
     except Exception as e:
         logger.exception(f"Failed to save config '{path}': {e}")
+
+
+# Track last modification time for hot-reload
+_config_mtime: Dict[str, float] = {}
+
+
+def watch_config(path: str = "cone_config.yaml") -> bool:
+    """
+    Check if config file has been modified since last check.
+    
+    Args:
+        path: Path to config file
+        
+    Returns:
+        True if file has been modified or is being watched for first time
+    """
+    try:
+        if not os.path.exists(path):
+            return False
+        
+        current_mtime = os.path.getmtime(path)
+        
+        # First time watching this file
+        if path not in _config_mtime:
+            _config_mtime[path] = current_mtime
+            return False
+        
+        # Check if modified
+        if current_mtime > _config_mtime[path]:
+            _config_mtime[path] = current_mtime
+            return True
+        
+        return False
+    except Exception as e:
+        logger.exception(f"Failed to watch config '{path}': {e}")
+        return False

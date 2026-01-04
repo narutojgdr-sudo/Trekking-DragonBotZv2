@@ -3,6 +3,14 @@
 Main entry point for cone detection and tracking system.
 This script uses the modular cone_tracker package.
 """
+import logging
+
+# Configurar logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
 from cone_tracker import App
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@ import time
 
 import cv2
 
-from .config import load_config, save_config
+from .config import load_config, save_config, watch_config
 from .detector import ConeDetector
 from .tracker import MultiConeTracker
 from .visualizer import Visualizer
@@ -24,6 +24,19 @@ class App:
         self.detector = ConeDetector(self.config)
         self.tracker = MultiConeTracker(self.config)
         self.vis = Visualizer(self.config)
+        self.config_reload_msg = None
+        self.config_reload_time = 0.0
+
+    def reload_config(self):
+        """Reload configuration and reinitialize components."""
+        logger.info("⚙️ Recarregando configuração...")
+        self.config = load_config()
+        self.detector = ConeDetector(self.config)
+        self.tracker = MultiConeTracker(self.config)
+        self.vis = Visualizer(self.config)
+        self.config_reload_msg = "⚙️ Config recarregada!"
+        self.config_reload_time = time.time()
+        logger.info("✅ Configuração recarregada com sucesso!")
 
     def run(self):
         """Run the main application loop."""
@@ -40,9 +53,21 @@ class App:
         t_last = time.time()
         fail_count = 0
         max_fail = int(cam.get("max_consecutive_read_failures", 120))
+        
+        # Config watch setup
+        config_path = "cone_config.yaml"
+        watch_config(config_path)  # Initialize watcher
 
         try:
             while True:
+                # Check for config file changes
+                if watch_config(config_path):
+                    self.reload_config()
+                
+                # Clear reload message after 3 seconds
+                if self.config_reload_msg and (time.time() - self.config_reload_time) > 3.0:
+                    self.config_reload_msg = None
+                
                 ret, frame = cap.read()
                 if not ret:
                     fail_count += 1
@@ -64,7 +89,7 @@ class App:
 
                 # Only CONFIRMED tracks by default (cfg.draw_suspects controls)
                 tracks_to_draw = self.tracker.tracks if self.config["debug"].get("draw_suspects", False) else self.tracker.confirmed_tracks()
-                out = self.vis.draw(proc.copy(), tracks_to_draw, rejects, fps)
+                out = self.vis.draw(proc.copy(), tracks_to_draw, rejects, fps, self.config_reload_msg)
 
                 if self.config["debug"]["show_windows"]:
                     cv2.imshow("Tracker", out)
@@ -76,6 +101,8 @@ class App:
                         break
                     if k == ord("s"):
                         save_config(self.config)
+                    if k == ord("r"):
+                        self.reload_config()
         finally:
             cap.release()
             cv2.destroyAllWindows()

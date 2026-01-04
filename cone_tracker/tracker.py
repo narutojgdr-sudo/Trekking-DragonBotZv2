@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Multi-object tracking for cone detection."""
+import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
@@ -8,6 +9,8 @@ from typing import Any, Dict, List, Tuple
 import numpy as np
 
 from .utils import ConeState, bbox_distance
+
+logger = logging.getLogger(__name__)
 
 
 # =========================
@@ -128,6 +131,9 @@ class MultiConeTracker:
         for t in self.tracks:
             if now - t.last_seen <= float(self.cfg["lost_timeout"]):
                 alive.append(t)
+            else:
+                # LOG when track is deleted
+                logger.info(f"🗑️  Track {t.track_id} DELETADO: frames={len(t.score_hist)}, avg={t.avg_score():.2f}, idade={(now - t.created_at):.2f}s")
         self.tracks = alive
 
         # 2) Associate
@@ -165,7 +171,15 @@ class MultiConeTracker:
 
         # 6) Decide state (CONFIRMED) by average
         for t in self.tracks:
-            if len(t.score_hist) >= int(self.cfg["min_frames_for_confirm"]) and t.avg_score() >= float(self.geo["confirm_avg_score"]):
+            frames = len(t.score_hist)
+            avg = t.avg_score()
+            min_frames = int(self.cfg["min_frames_for_confirm"])
+            threshold = float(self.geo["confirm_avg_score"])
+            
+            if frames >= min_frames and avg >= threshold:
+                if t.state != ConeState.CONFIRMED:
+                    # LOG when confirma
+                    logger.info(f"✅ Track {t.track_id} CONFIRMADO! frames={frames}, avg={avg:.2f}")
                 t.state = ConeState.CONFIRMED
             else:
                 if t.state != ConeState.CONFIRMED:
