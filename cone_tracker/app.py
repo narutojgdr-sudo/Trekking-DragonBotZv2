@@ -62,7 +62,7 @@ class App:
                 fps = 1.0 / (now - t_last + 1e-6)
                 t_last = now
 
-                # SOMENTE CONFIRMED por padrão (cfg.draw_suspects controla)
+                # Only CONFIRMED tracks by default (cfg.draw_suspects controls)
                 tracks_to_draw = self.tracker.tracks if self.config["debug"].get("draw_suspects", False) else self.tracker.confirmed_tracks()
                 out = self.vis.draw(proc.copy(), tracks_to_draw, rejects, fps)
 

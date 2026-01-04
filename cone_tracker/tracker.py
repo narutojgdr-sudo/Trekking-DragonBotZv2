@@ -173,6 +173,6 @@ class MultiConeTracker:
 
     def confirmed_tracks(self) -> List[Track]:
         """Get list of confirmed tracks."""
-        min_age = int(self.cfg.get("min_confirmed_age_frames", 0))
-        # min_age in frames is not stored; keeping it simple: return CONFIRMED directly
+        # Note: min_confirmed_age_frames is currently not enforced in frame count
+        # Returning all CONFIRMED tracks regardless of age
         return [t for t in self.tracks if t.state == ConeState.CONFIRMED]

@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 # =========================
-# DETECTOR (mesmo pipeline, retorna múltiplos candidatos)
+# DETECTOR (returns multiple candidates)
 # =========================
 class ConeDetector:
     """Cone detection using color-based segmentation and geometric validation."""
