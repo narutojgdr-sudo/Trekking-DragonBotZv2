@@ -27,12 +27,21 @@ class Visualizer:
         """Get color for track ID."""
         return self.COLORS[track_id % len(self.COLORS)]
 
-    def draw(self, frame: np.ndarray, tracks: List[Track], rejects: List[Tuple[Tuple[int, int, int, int], str]], fps: float):
+    def draw(self, frame: np.ndarray, tracks: List[Track], rejects: List[Tuple[Tuple[int, int, int, int], str]], fps: float, config_reload_msg: str = None):
         """Draw tracking visualization on frame."""
         if not self.cfg["show_windows"]:
             return frame
 
+        # FPS
         cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        
+        # Tracks info
+        confirmed_count = sum(1 for t in tracks if t.state == ConeState.CONFIRMED)
+        cv2.putText(frame, f"Tracks: {len(tracks)} ({confirmed_count} confirmed)", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        
+        # Config reload message (if there is one)
+        if config_reload_msg:
+            cv2.putText(frame, config_reload_msg, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
         # draw tracks
         for t in tracks:
