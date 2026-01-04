@@ -82,8 +82,8 @@ class MultiConeTracker:
 
     def _associate_greedy(self, detections: List[Tuple[Tuple[int, int, int, int], float, dict]]) -> Tuple[Dict[int, int], List[int], List[int]]:
         """
-        Associa tracks->detections por distância (greedy).
-        Retorna:
+        Associate tracks->detections by distance (greedy).
+        Returns:
         - matches: {track_index: detection_index}
         - unmatched_tracks: [track_index]
         - unmatched_detections: [detection_index]
@@ -102,7 +102,7 @@ class MultiConeTracker:
                 if dist <= max_dist:
                     pairs.append((dist, ti, di))
 
-        pairs.sort(key=lambda x: x[0])  # menor distância primeiro
+        pairs.sort(key=lambda x: x[0])  # smallest distance first
 
         matched_tracks = set()
         matched_dets = set()
@@ -123,22 +123,22 @@ class MultiConeTracker:
         """Update tracker with new detections."""
         now = time.time()
 
-        # 1) Expira tracks antigos
+        # 1) Expire old tracks
         alive = []
         for t in self.tracks:
             if now - t.last_seen <= float(self.cfg["lost_timeout"]):
                 alive.append(t)
         self.tracks = alive
 
-        # 2) Associa
+        # 2) Associate
         matches, unmatched_tracks, unmatched_dets = self._associate_greedy(detections)
 
-        # 3) Atualiza os casados
+        # 3) Update matched tracks
         for ti, di in matches.items():
             bbox, score, _data = detections[di]
             self.tracks[ti].update(bbox, score, alpha=float(self.cfg["ema_alpha"]), score_window=int(self.cfg["score_window"]))
 
-        # 4) Atualiza "miss" dos não casados (para grace)
+        # 4) Update miss counter for unmatched tracks (for grace period)
         for ti in unmatched_tracks:
             t = self.tracks[ti]
             if t.state == ConeState.CONFIRMED:
@@ -156,14 +156,14 @@ class MultiConeTracker:
                         t.score_hist.clear()
                         t.miss_counter = 0
 
-        # 5) Cria tracks para detecções não casadas
+        # 5) Create tracks for unmatched detections
         for di in unmatched_dets:
             if len(self.tracks) >= int(self.cfg["max_tracks"]):
                 break
             bbox, score, _data = detections[di]
             self.tracks.append(self._make_track(bbox, score))
 
-        # 6) Decide estado (CONFIRMED) por média
+        # 6) Decide state (CONFIRMED) by average
         for t in self.tracks:
             if len(t.score_hist) >= int(self.cfg["min_frames_for_confirm"]) and t.avg_score() >= float(self.geo["confirm_avg_score"]):
                 t.state = ConeState.CONFIRMED
@@ -174,5 +174,5 @@ class MultiConeTracker:
     def confirmed_tracks(self) -> List[Track]:
         """Get list of confirmed tracks."""
         min_age = int(self.cfg.get("min_confirmed_age_frames", 0))
-        # min_age em frames não é armazenado; mantendo simples: retorna CONFIRMED diretamente
+        # min_age in frames is not stored; keeping it simple: return CONFIRMED directly
         return [t for t in self.tracks if t.state == ConeState.CONFIRMED]

@@ -31,7 +31,7 @@ class App:
         cap = cv2.VideoCapture(cam["index"], cv2.CAP_V4L2)
 
         if not cap.isOpened():
-            raise RuntimeError("Camera não abriu (cap.isOpened() == False)")
+            raise RuntimeError("Camera failed to open (cap.isOpened() == False)")
 
         cap.set(cv2.CAP_PROP_FRAME_WIDTH, cam["capture_width"])
         cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cam["capture_height"])
@@ -47,7 +47,7 @@ class App:
                 if not ret:
                     fail_count += 1
                     if fail_count >= max_fail:
-                        logger.error("Muitas falhas consecutivas de leitura da câmera. Saindo.")
+                        logger.error("Too many consecutive camera read failures. Exiting.")
                         break
                     time.sleep(0.01)
                     continue

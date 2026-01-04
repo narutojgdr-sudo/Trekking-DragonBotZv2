@@ -34,7 +34,7 @@ class Visualizer:
 
         cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
 
-        # desenha tracks
+        # draw tracks
         for t in tracks:
             if t.state == ConeState.CONFIRMED:
                 color = self._color(t.track_id)
@@ -55,7 +55,7 @@ class Visualizer:
                 2,
             )
 
-        # rejeições (opcional)
+        # rejections (optional)
         if self.cfg.get("show_rejection_reason", False):
             for bbox, reason in rejects:
                 x, y, w, h = bbox

@@ -26,7 +26,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "show_windows": True,
         "show_mask": True,
         "show_rejection_reason": False,
-        "draw_suspects": False,     # se True, desenha SUSPECT em amarelo também
+        "draw_suspects": False,     # if True, draws SUSPECT in yellow as well
         "show_groups": False,
     },
     "hsv_orange": {
@@ -67,8 +67,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "aspect": 0.15,
     },
     "tracking": {
-        "max_tracks": 8,              # MULTI: máximo de cones simultâneos
-        "association_max_distance": 140,  # MULTI: distância máxima (px) para casar detecção->track
+        "max_tracks": 8,              # MULTI: maximum simultaneous cones
+        "association_max_distance": 140,  # MULTI: maximum distance (px) to associate detection->track
 
         "ema_alpha": 0.25,
         "lost_timeout": 0.6,
@@ -76,15 +76,15 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "min_frames_for_confirm": 6,
         "grace_frames": 12,
         "grace_seconds": 0.0,
-        "min_confirmed_age_frames": 0,  # opcional: exigir idade mínima para mostrar
+        "min_confirmed_age_frames": 0,  # optional: require minimum age to display
     },
     "clahe": {"clip_limit": 1.8, "tile_grid_size": [8, 8]},
-    # Novas opções de cor / robustez
+    # Color/robustness options
     "color": {
         "enable_gray_world": True,
         "enable_lab_fallback": True,
-        "lab_a_range": [140, 200],   # ajuste se necessário
-        "lab_b_range": [130, 200],   # opcional
+        "lab_a_range": [140, 200],   # adjust if needed
+        "lab_b_range": [130, 200],   # optional
         "enable_rg": False,
         "rg_thresholds": {"r_min": 0.30, "r_max": 0.75, "g_min": 0.12, "g_max": 0.50},
         "enable_backproj": False,
@@ -115,7 +115,7 @@ def load_config(path: str = "cone_config.yaml") -> Dict[str, Any]:
             user = yaml.safe_load(f) or {}
         cfg = deep_merge(cfg, user)
     except Exception as e:
-        logger.exception(f"Falha ao carregar config '{path}': {e}. Usando DEFAULT_CONFIG.")
+        logger.exception(f"Failed to load config '{path}': {e}. Using DEFAULT_CONFIG.")
         cfg = dict(DEFAULT_CONFIG)
     cfg = deep_merge(DEFAULT_CONFIG, cfg)
     return cfg
@@ -126,6 +126,6 @@ def save_config(config: Dict[str, Any], path: str = "cone_config.yaml") -> None:
     try:
         with open(path, "w") as f:
             yaml.dump(config, f, default_flow_style=False, sort_keys=False)
-        logger.info(f"Config salva em {path}")
+        logger.info(f"Config saved to {path}")
     except Exception as e:
-        logger.exception(f"Falha ao salvar config '{path}': {e}")
+        logger.exception(f"Failed to save config '{path}': {e}")

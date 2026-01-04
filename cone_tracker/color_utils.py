@@ -46,7 +46,7 @@ def load_backproj_hist(path: str):
         cv2.normalize(hist, hist, 0, 255, cv2.NORM_MINMAX)
         return hist
     except Exception as e:
-        logger.warning(f"Falha ao carregar histograma de backproj '{path}': {e}")
+        logger.warning(f"Failed to load backproj histogram '{path}': {e}")
         return None
 
 
