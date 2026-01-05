@@ -1,7 +1,7 @@
 """
 Formatting utilities for Streamlit dashboard
 """
-from typing import Any, Union
+from typing import Any
 
 
 def format_metric(value: Any, unit: str = "", default: str = "N/A") -> str:
