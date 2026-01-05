@@ -2,6 +2,7 @@
 import streamlit as st
 import copy
 from utils.config_manager import ConfigManager
+from utils.formatting import format_metric, safe_get
 
 st.set_page_config(
     page_title="Presets",
@@ -133,11 +134,11 @@ if st.session_state.current_config:
         st.subheader("Tracking Parameters")
         if 'tracking' in config:
             tracking = config['tracking']
-            st.metric("Lost Timeout", f"{tracking.get('lost_timeout', 'N/A')}s")
-            st.metric("Min Frames to Confirm", tracking.get('min_frames_for_confirm', 'N/A'))
-            st.metric("Association Distance", f"{tracking.get('association_max_distance', 'N/A')}px")
-            st.metric("EMA Alpha", tracking.get('ema_alpha', 'N/A'))
-            st.metric("Grace Frames", tracking.get('grace_frames', 'N/A'))
+            st.metric("Lost Timeout", format_metric(tracking.get('lost_timeout'), "s"))
+            st.metric("Min Frames to Confirm", format_metric(tracking.get('min_frames_for_confirm')))
+            st.metric("Association Distance", format_metric(tracking.get('association_max_distance'), "px"))
+            st.metric("EMA Alpha", format_metric(tracking.get('ema_alpha')))
+            st.metric("Grace Frames", format_metric(tracking.get('grace_frames')))
         else:
             st.info("No tracking configuration loaded")
     
@@ -145,11 +146,13 @@ if st.session_state.current_config:
         st.subheader("Geometry Parameters")
         if 'geometry' in config:
             geometry = config['geometry']
-            st.metric("Confirm Avg Score", geometry.get('confirm_avg_score', 'N/A'))
-            st.metric("Min Frame Score", geometry.get('min_frame_score', 'N/A'))
-            st.metric("Min Area", f"{geometry.get('min_group_area', 'N/A'):,}px²")
-            st.metric("Max Area", f"{geometry.get('max_group_area', 'N/A'):,}px²")
-            st.metric("Aspect Range", f"{geometry.get('aspect_min', 'N/A')} - {geometry.get('aspect_max', 'N/A')}")
+            st.metric("Confirm Avg Score", format_metric(geometry.get('confirm_avg_score')))
+            st.metric("Min Frame Score", format_metric(geometry.get('min_frame_score')))
+            st.metric("Min Area", format_metric(geometry.get('min_group_area'), " px²"))
+            st.metric("Max Area", format_metric(geometry.get('max_group_area'), " px²"))
+            min_aspect = format_metric(geometry.get('aspect_min'))
+            max_aspect = format_metric(geometry.get('aspect_max'))
+            st.metric("Aspect Range", f"{min_aspect} - {max_aspect}")
         else:
             st.info("No geometry configuration loaded")
     
