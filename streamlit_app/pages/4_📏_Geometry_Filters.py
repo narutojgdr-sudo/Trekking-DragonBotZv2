@@ -39,7 +39,7 @@ st.header("Quick Presets")
 col1, col2 = st.columns(2)
 
 with col1:
-    if st.button("🔓 Permissive Filters", use_container_width=True):
+    if st.button("🔓 Permissive Filters", width="stretch"):
         preset = ConfigManager.get_preset("Permissive")
         if preset and 'geometry' in preset:
             config['geometry'].update(preset['geometry'])
@@ -47,7 +47,7 @@ with col1:
             st.rerun()
 
 with col2:
-    if st.button("🎯 Strict Filters", use_container_width=True):
+    if st.button("🎯 Strict Filters", width="stretch"):
         preset = ConfigManager.get_preset("Strict")
         if preset and 'geometry' in preset:
             config['geometry'].update(preset['geometry'])
@@ -268,7 +268,7 @@ with col1:
     st.info("💡 Changes are saved to session. Use the Connection page to upload to remote server.")
 
 with col2:
-    if st.button("💾 Save to Session", type="primary", use_container_width=True):
+    if st.button("💾 Save to Session", type="primary", width="stretch"):
         st.session_state.current_config = config
         st.success("✅ Saved to session!")
 

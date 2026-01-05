@@ -36,7 +36,7 @@ st.header("Quick Presets")
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    if st.button("🏆 Competition Optimized", use_container_width=True):
+    if st.button("🏆 Competition Optimized", width="stretch"):
         preset = ConfigManager.get_preset("Competition Optimized")
         if preset and 'tracking' in preset:
             config['tracking'].update(preset['tracking'])
@@ -44,7 +44,7 @@ with col1:
             st.rerun()
 
 with col2:
-    if st.button("🔓 Permissive", use_container_width=True):
+    if st.button("🔓 Permissive", width="stretch"):
         preset = ConfigManager.get_preset("Permissive")
         if preset and 'tracking' in preset:
             config['tracking'].update(preset['tracking'])
@@ -52,7 +52,7 @@ with col2:
             st.rerun()
 
 with col3:
-    if st.button("🎯 Strict", use_container_width=True):
+    if st.button("🎯 Strict", width="stretch"):
         preset = ConfigManager.get_preset("Strict")
         if preset and 'tracking' in preset:
             config['tracking'].update(preset['tracking'])
@@ -222,7 +222,7 @@ with col1:
     st.info("💡 Changes are saved to session. Use the Connection page to upload to remote server.")
 
 with col2:
-    if st.button("💾 Save to Session", type="primary", use_container_width=True):
+    if st.button("💾 Save to Session", type="primary", width="stretch"):
         st.session_state.current_config = config
         st.success("✅ Saved to session!")
 

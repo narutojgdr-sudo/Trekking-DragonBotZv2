@@ -54,23 +54,23 @@ st.header("⚡ Quick Actions")
 col1, col2, col3, col4, col5 = st.columns(5)
 
 with col1:
-    if st.button("🔌 Connection", use_container_width=True, type="primary"):
+    if st.button("🔌 Connection", width="stretch", type="primary"):
         st.switch_page("pages/1_🔌_Connection.py")
 
 with col2:
-    if st.button("🎨 Color Tuning", use_container_width=True):
+    if st.button("🎨 Color Tuning", width="stretch"):
         st.switch_page("pages/2_🎨_Color_Tuning.py")
 
 with col3:
-    if st.button("🎯 Tracking", use_container_width=True):
+    if st.button("🎯 Tracking", width="stretch"):
         st.switch_page("pages/3_🎯_Tracking_Config.py")
 
 with col4:
-    if st.button("📏 Geometry", use_container_width=True):
+    if st.button("📏 Geometry", width="stretch"):
         st.switch_page("pages/4_📏_Geometry_Filters.py")
 
 with col5:
-    if st.button("⚡ Presets", use_container_width=True):
+    if st.button("⚡ Presets", width="stretch"):
         st.switch_page("pages/5_⚡_Presets.py")
 
 st.markdown("---")

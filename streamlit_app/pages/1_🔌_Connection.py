@@ -1,8 +1,35 @@
 """SFTP Connection configuration page."""
 import streamlit as st
 import os
+import re
 from datetime import datetime
 from utils.sftp_manager import SFTPManager
+
+
+def is_valid_host(host: str) -> bool:
+    """Validate IP address or hostname."""
+    # IPv4 pattern
+    ipv4_pattern = r'^(\d{1,3}\.){3}\d{1,3}$'
+    # Hostname pattern
+    hostname_pattern = r'^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*$'
+    
+    if re.match(ipv4_pattern, host):
+        # Validate IP octets
+        octets = host.split('.')
+        return all(0 <= int(octet) <= 255 for octet in octets)
+    return bool(re.match(hostname_pattern, host))
+
+
+def is_valid_port(port: int) -> bool:
+    """Validate port number."""
+    return 1 <= port <= 65535
+
+
+def is_valid_path(path: str) -> bool:
+    """Validate Unix file path."""
+    # Must start with / and contain valid characters
+    return bool(re.match(r'^/[a-zA-Z0-9/_\-\.]+$', path))
+
 
 st.set_page_config(
     page_title="SFTP Connection",
@@ -78,32 +105,63 @@ col1, col2, col3 = st.columns([1, 1, 2])
 
 with col1:
     if st.button("🔍 Test Connection", type="primary"):
-        with st.spinner("Testing connection..."):
-            try:
-                # Store credentials
-                st.session_state.sftp_host = host
-                st.session_state.sftp_port = port
-                st.session_state.sftp_username = username
-                
-                # Create SFTP manager
-                manager = SFTPManager(
-                    host=host,
-                    port=port,
-                    username=username,
-                    password=password,
-                    key_path=key_path
-                )
-                
-                if manager.connect():
-                    st.session_state.sftp_manager = manager
-                    st.session_state.connected = True
-                    st.success("✅ Connection successful!")
-                else:
+        # Validate inputs first
+        validation_errors = []
+        
+        if not is_valid_host(host):
+            validation_errors.append("❌ Invalid hostname or IP address")
+        
+        if not is_valid_port(port):
+            validation_errors.append("❌ Port must be between 1 and 65535")
+        
+        if validation_errors:
+            for error in validation_errors:
+                st.error(error)
+        else:
+            with st.spinner("Testing connection..."):
+                try:
+                    # Store credentials
+                    st.session_state.sftp_host = host
+                    st.session_state.sftp_port = port
+                    st.session_state.sftp_username = username
+                    
+                    # Create SFTP manager
+                    manager = SFTPManager(
+                        host=host,
+                        port=port,
+                        username=username,
+                        password=password,
+                        key_path=key_path
+                    )
+                    
+                    success, message = manager.connect()
+                    if success:
+                        st.session_state.sftp_manager = manager
+                        st.session_state.connected = True
+                        st.success(f"✅ {message}")
+                    else:
+                        st.session_state.connected = False
+                        st.error(f"❌ {message}")
+                        
+                        # Troubleshooting hints
+                        if "port" in message.lower() or "network" in message.lower():
+                            st.warning("""
+                            **Troubleshooting Steps:**
+                            1. Check if SSH service is running: `systemctl status ssh`
+                            2. Start SSH service: `sudo systemctl start ssh`
+                            3. Check firewall: `sudo ufw allow 22`
+                            4. Verify IP address: `hostname -I`
+                            """)
+                        elif "auth" in message.lower():
+                            st.warning("""
+                            **Authentication Failed:**
+                            - Verify username and password
+                            - Try using SSH key instead
+                            - Check if user has SSH access: `cat /etc/ssh/sshd_config`
+                            """)
+                except Exception as e:
                     st.session_state.connected = False
-                    st.error("❌ Connection failed. Check credentials and network.")
-            except Exception as e:
-                st.session_state.connected = False
-                st.error(f"❌ Error: {str(e)}")
+                    st.error(f"❌ Unexpected error: {str(e)}")
 
 with col2:
     if st.button("Disconnect") and st.session_state.connected:
@@ -220,40 +278,48 @@ if st.session_state.connected and st.session_state.sftp_manager:
     
     with col1:
         if st.button("📥 Download Config", type="primary"):
-            with st.spinner("Downloading config..."):
-                try:
-                    config = st.session_state.sftp_manager.download_config(remote_path)
-                    if config:
-                        st.session_state.current_config = config
-                        st.session_state.last_sync = datetime.now()
-                        st.success("✅ Config downloaded successfully!")
-                        
-                        # Show preview
-                        with st.expander("📄 Config Preview"):
-                            st.json(config)
-                    else:
-                        st.error("Failed to download config")
-                except Exception as e:
-                    st.error(f"Error: {str(e)}")
+            # Validate path
+            if not is_valid_path(remote_path):
+                st.error("❌ Invalid file path format")
+            else:
+                with st.spinner("Downloading config..."):
+                    try:
+                        config, message = st.session_state.sftp_manager.download_config(remote_path)
+                        if config:
+                            st.session_state.current_config = config
+                            st.session_state.last_sync = datetime.now()
+                            st.success(f"✅ {message}")
+                            
+                            # Show preview
+                            with st.expander("📄 Config Preview"):
+                                st.json(config)
+                        else:
+                            st.error(f"❌ {message}")
+                    except Exception as e:
+                        st.error(f"❌ Unexpected error: {str(e)}")
     
     with col2:
         # Upload current config (if exists in session)
         if 'current_config' in st.session_state:
             if st.button("💾 Upload Config", type="secondary"):
-                with st.spinner("Uploading config..."):
-                    try:
-                        success = st.session_state.sftp_manager.upload_config(
-                            st.session_state.current_config,
-                            remote_path,
-                            backup=True
-                        )
-                        if success:
-                            st.session_state.last_sync = datetime.now()
-                            st.success("✅ Config uploaded successfully! (Backup created)")
-                        else:
-                            st.error("Failed to upload config")
-                    except Exception as e:
-                        st.error(f"Error: {str(e)}")
+                # Validate path
+                if not is_valid_path(remote_path):
+                    st.error("❌ Invalid file path format")
+                else:
+                    with st.spinner("Uploading config..."):
+                        try:
+                            success, message = st.session_state.sftp_manager.upload_config(
+                                st.session_state.current_config,
+                                remote_path,
+                                backup=True
+                            )
+                            if success:
+                                st.session_state.last_sync = datetime.now()
+                                st.success(f"✅ {message} (Backup created)")
+                            else:
+                                st.error(f"❌ {message}")
+                        except Exception as e:
+                            st.error(f"❌ Unexpected error: {str(e)}")
         else:
             st.info("Download config first before uploading")
 

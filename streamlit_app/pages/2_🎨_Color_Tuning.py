@@ -35,7 +35,7 @@ st.header("Quick Presets")
 col1, col2, col3 = st.columns(3)
 
 with col1:
-    if st.button("🌞 Bright Outdoor", use_container_width=True):
+    if st.button("🌞 Bright Outdoor", width="stretch"):
         preset = ConfigManager.get_preset("Bright Outdoor")
         if preset and 'hsv_orange' in preset:
             config['hsv_orange'] = preset['hsv_orange']
@@ -43,7 +43,7 @@ with col1:
             st.rerun()
 
 with col2:
-    if st.button("🏢 Indoor/Shadows", use_container_width=True):
+    if st.button("🏢 Indoor/Shadows", width="stretch"):
         preset = ConfigManager.get_preset("Indoor/Shadows")
         if preset and 'hsv_orange' in preset:
             config['hsv_orange'] = preset['hsv_orange']
@@ -51,7 +51,7 @@ with col2:
             st.rerun()
 
 with col3:
-    if st.button("🔄 Reset to Default", use_container_width=True):
+    if st.button("🔄 Reset to Default", width="stretch"):
         config['hsv_orange'] = {
             "low_1": [0, 90, 90],
             "high_1": [28, 255, 255],
@@ -239,7 +239,7 @@ with col1:
         mid_v1 = (low_v1 + high_v1) // 2
         
         preview1 = create_hsv_preview([low_h1, high_h1], mid_s1, mid_v1, "Range 1")
-        st.image(preview1, use_container_width=True, caption=f"H: {low_h1}-{high_h1}, S: {low_s1}-{high_s1}, V: {low_v1}-{high_v1}")
+        st.image(preview1, width="stretch", caption=f"H: {low_h1}-{high_h1}, S: {low_s1}-{high_s1}, V: {low_v1}-{high_v1}")
     except ImportError:
         st.info("Install OpenCV (cv2) to see color preview")
 
@@ -252,7 +252,7 @@ with col2:
         mid_v2 = (low_v2 + high_v2) // 2
         
         preview2 = create_hsv_preview([low_h2, high_h2], mid_s2, mid_v2, "Range 2")
-        st.image(preview2, use_container_width=True, caption=f"H: {low_h2}-{high_h2}, S: {low_s2}-{high_s2}, V: {low_v2}-{high_v2}")
+        st.image(preview2, width="stretch", caption=f"H: {low_h2}-{high_h2}, S: {low_s2}-{high_s2}, V: {low_v2}-{high_v2}")
     except ImportError:
         st.info("Install OpenCV (cv2) to see color preview")
 
@@ -266,7 +266,7 @@ with col1:
     st.info("💡 Changes are saved to session. Use the Connection page to upload to remote server.")
 
 with col2:
-    if st.button("💾 Save to Session", type="primary", use_container_width=True):
+    if st.button("💾 Save to Session", type="primary", width="stretch"):
         st.session_state.current_config = config
         st.success("✅ Saved to session!")
 

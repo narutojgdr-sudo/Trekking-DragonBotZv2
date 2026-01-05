@@ -104,7 +104,7 @@ for idx, preset_name in enumerate(presets):
                 st.json(preset_config)
             
             # Load button
-            if st.button(f"Load {preset_name}", key=f"load_{preset_name}", use_container_width=True, type="primary"):
+            if st.button(f"Load {preset_name}", key=f"load_{preset_name}", width="stretch", type="primary"):
                 # Merge preset with current config
                 if st.session_state.current_config:
                     merged = ConfigManager.deep_merge(
@@ -188,7 +188,7 @@ if st.session_state.current_config:
             data=config_json,
             file_name="cone_config_export.json",
             mime="application/json",
-            use_container_width=True
+            width="stretch"
         )
     
     with col2:
@@ -200,7 +200,7 @@ if st.session_state.current_config:
             data=config_yaml,
             file_name="cone_config_export.yaml",
             mime="text/yaml",
-            use_container_width=True
+            width="stretch"
         )
 
 else:
@@ -240,13 +240,13 @@ if uploaded_file is not None:
         col1, col2 = st.columns(2)
         
         with col1:
-            if st.button("✅ Apply Imported Config", type="primary", use_container_width=True):
+            if st.button("✅ Apply Imported Config", type="primary", width="stretch"):
                 st.session_state.current_config = imported_config
                 st.success("Configuration applied!")
                 st.rerun()
         
         with col2:
-            if st.button("🔄 Merge with Current", use_container_width=True):
+            if st.button("🔄 Merge with Current", width="stretch"):
                 if st.session_state.current_config:
                     merged = ConfigManager.deep_merge(
                         st.session_state.current_config,

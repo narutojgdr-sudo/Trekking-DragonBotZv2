@@ -2,13 +2,45 @@
 import io
 import logging
 import os
+import socket
+import stat
 from datetime import datetime
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 
 import paramiko
 import yaml
 
 logger = logging.getLogger(__name__)
+
+
+def test_port(host: str, port: int, timeout: int = 5) -> Tuple[bool, str]:
+    """
+    Test if a port is open on remote host.
+    
+    Args:
+        host: Remote host IP or hostname
+        port: Port number to test
+        timeout: Connection timeout in seconds
+    
+    Returns:
+        (success, message)
+    """
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(timeout)
+        result = sock.connect_ex((host, port))
+        sock.close()
+        
+        if result == 0:
+            return True, f"Port {port} is open"
+        else:
+            return False, f"Port {port} is closed or filtered"
+    except socket.gaierror:
+        return False, f"Hostname {host} could not be resolved"
+    except socket.timeout:
+        return False, f"Connection to {host}:{port} timed out"
+    except Exception as e:
+        return False, f"Network error: {str(e)}"
 
 
 class SFTPManager:
@@ -45,13 +77,19 @@ class SFTPManager:
         self.sftp_client: Optional[paramiko.SFTPClient] = None
         self.connected = False
     
-    def connect(self) -> bool:
+    def connect(self) -> Tuple[bool, str]:
         """
         Establish SFTP connection.
         
         Returns:
-            True if connection successful, False otherwise
+            (success, message)
         """
+        # Test port first
+        port_ok, port_msg = test_port(self.host, self.port, timeout=5)
+        if not port_ok:
+            logger.error(f"❌ {port_msg}")
+            return False, f"Network error: {port_msg}"
+        
         try:
             # Create SSH client
             self.ssh_client = paramiko.SSHClient()
@@ -70,8 +108,9 @@ class SFTPManager:
             elif self.key_path and os.path.exists(self.key_path):
                 connect_kwargs['key_filename'] = self.key_path
             else:
-                logger.error("No valid authentication method provided")
-                return False
+                msg = "No valid authentication method provided"
+                logger.error(f"❌ {msg}")
+                return False, msg
             
             self.ssh_client.connect(**connect_kwargs)
             
@@ -80,20 +119,23 @@ class SFTPManager:
             self.connected = True
             
             logger.info(f"✅ Connected to {self.host}:{self.port}")
-            return True
+            return True, "Connected successfully"
             
         except paramiko.AuthenticationException:
-            logger.error("❌ Authentication failed")
+            msg = "Authentication failed - check username/password"
+            logger.error(f"❌ {msg}")
             self.connected = False
-            return False
+            return False, msg
         except paramiko.SSHException as e:
-            logger.error(f"❌ SSH error: {e}")
+            msg = f"SSH error: {str(e)}"
+            logger.error(f"❌ {msg}")
             self.connected = False
-            return False
+            return False, msg
         except Exception as e:
-            logger.error(f"❌ Connection failed: {e}")
+            msg = f"Connection failed: {str(e)}"
+            logger.error(f"❌ {msg}")
             self.connected = False
-            return False
+            return False, msg
     
     def disconnect(self):
         """Close SFTP connection."""
@@ -124,7 +166,7 @@ class SFTPManager:
         try:
             items = []
             for attr in self.sftp_client.listdir_attr(path):
-                is_dir = paramiko.sftp_attr.S_ISDIR(attr.st_mode)
+                is_dir = stat.S_ISDIR(attr.st_mode)
                 items.append({
                     'name': attr.filename,
                     'is_dir': is_dir,
@@ -188,7 +230,7 @@ class SFTPManager:
             logger.error(f"Error getting file info: {e}")
             return None
     
-    def download_config(self, remote_path: str) -> Optional[Dict[str, Any]]:
+    def download_config(self, remote_path: str) -> Tuple[Optional[Dict[str, Any]], str]:
         """
         Download and parse YAML config from remote server.
         
@@ -196,11 +238,10 @@ class SFTPManager:
             remote_path: Remote YAML file path
             
         Returns:
-            Parsed config dict or None if error
+            (config_dict, message)
         """
         if not self.connected or not self.sftp_client:
-            logger.error("Not connected to SFTP server")
-            return None
+            return None, "Not connected to SFTP server"
         
         try:
             # Download file to memory
@@ -211,24 +252,31 @@ class SFTPManager:
                 # Parse YAML
                 config = yaml.safe_load(file_buffer)
                 logger.info(f"✅ Downloaded config from {remote_path}")
-                return config
+                return config, f"Downloaded successfully from {remote_path}"
                 
         except FileNotFoundError:
-            logger.error(f"File not found: {remote_path}")
-            return None
+            msg = f"File not found: {remote_path}"
+            logger.error(msg)
+            return None, msg
         except yaml.YAMLError as e:
-            logger.error(f"YAML parsing error: {e}")
-            return None
+            msg = f"Invalid YAML format: {str(e)}"
+            logger.error(msg)
+            return None, msg
+        except PermissionError:
+            msg = f"Permission denied reading {remote_path}"
+            logger.error(msg)
+            return None, msg
         except Exception as e:
-            logger.error(f"Error downloading config: {e}")
-            return None
+            msg = f"Download failed: {str(e)}"
+            logger.error(msg)
+            return None, msg
     
     def upload_config(
         self,
         config: Dict[str, Any],
         remote_path: str,
         backup: bool = True
-    ) -> bool:
+    ) -> Tuple[bool, str]:
         """
         Upload config to remote server.
         
@@ -238,18 +286,17 @@ class SFTPManager:
             backup: Whether to create backup before overwriting
             
         Returns:
-            True if successful, False otherwise
+            (success, message)
         """
         if not self.connected or not self.sftp_client:
-            logger.error("Not connected to SFTP server")
-            return False
+            return False, "Not connected to SFTP server"
         
         try:
             # Create backup if requested and file exists
             if backup and self.file_exists(remote_path):
-                backup_path = self.create_backup(remote_path)
-                if not backup_path:
-                    logger.warning("Failed to create backup, proceeding anyway")
+                backup_success, backup_path = self.create_backup(remote_path)
+                if not backup_success:
+                    logger.warning(f"Backup failed: {backup_path}, proceeding anyway")
             
             # Convert config to YAML
             yaml_content = yaml.dump(config, default_flow_style=False, sort_keys=False)
@@ -259,13 +306,18 @@ class SFTPManager:
                 self.sftp_client.putfo(file_buffer, remote_path)
             
             logger.info(f"✅ Uploaded config to {remote_path}")
-            return True
+            return True, f"Uploaded successfully to {remote_path}"
             
+        except PermissionError:
+            msg = f"Permission denied writing to {remote_path}"
+            logger.error(msg)
+            return False, msg
         except Exception as e:
-            logger.error(f"Error uploading config: {e}")
-            return False
+            msg = f"Upload failed: {str(e)}"
+            logger.error(msg)
+            return False, msg
     
-    def create_backup(self, remote_path: str) -> Optional[str]:
+    def create_backup(self, remote_path: str) -> Tuple[bool, str]:
         """
         Create backup of remote file with timestamp.
         
@@ -273,11 +325,10 @@ class SFTPManager:
             remote_path: Remote file path to backup
             
         Returns:
-            Backup file path or None if error
+            (success, backup_path_or_error_message)
         """
         if not self.connected or not self.sftp_client:
-            logger.error("Not connected to SFTP server")
-            return None
+            return False, "Not connected to SFTP server"
         
         try:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -290,11 +341,12 @@ class SFTPManager:
                 self.sftp_client.putfo(buffer, backup_path)
             
             logger.info(f"✅ Created backup: {backup_path}")
-            return backup_path
+            return True, backup_path
             
         except Exception as e:
-            logger.error(f"Error creating backup: {e}")
-            return None
+            msg = f"Error creating backup: {str(e)}"
+            logger.error(msg)
+            return False, msg
     
     def download_file(self, remote_path: str, local_path: str) -> bool:
         """
