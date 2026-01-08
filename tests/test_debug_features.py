@@ -1,0 +1,212 @@
+"""
+Unit tests for debug and visualization features.
+Tests the new log_rejections and log_suspects features.
+"""
+import ast
+import re
+
+
+class TestVisualizerChanges:
+    """Tests for visualizer.py changes"""
+    
+    def test_visualizer_no_early_return(self):
+        """Test that visualizer.draw() does not have early return for show_windows"""
+        with open('cone_tracker/visualizer.py', 'r') as f:
+            content = f.read()
+        
+        # Parse the file
+        tree = ast.parse(content)
+        
+        # Find the draw method
+        draw_method = None
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == 'draw':
+                draw_method = node
+                break
+        
+        assert draw_method is not None, "draw method not found"
+        
+        # Check that there's no early return based on show_windows
+        # The old code had: if not self.cfg["show_windows"]: return frame
+        method_source = ast.get_source_segment(content, draw_method)
+        
+        # Should NOT have the old pattern
+        assert 'if not self.cfg["show_windows"]:\n            return frame' not in method_source, \
+            "Visualizer should not have early return for show_windows"
+    
+    def test_visualizer_has_reject_counter(self):
+        """Test that visualizer displays reject counter"""
+        with open('cone_tracker/visualizer.py', 'r') as f:
+            content = f.read()
+        
+        # Should have a line that displays rejects count
+        assert 'f"Rejects: {len(rejects)}"' in content, \
+            "Visualizer should display rejects counter"
+    
+    def test_visualizer_has_suspect_counter(self):
+        """Test that visualizer displays suspect counter"""
+        with open('cone_tracker/visualizer.py', 'r') as f:
+            content = f.read()
+        
+        # Should count suspects
+        assert 'suspect_count = sum(1 for t in tracks if t.state == ConeState.SUSPECT)' in content, \
+            "Visualizer should count suspects"
+        
+        # Should display suspects in track info
+        assert 'susp' in content, \
+            "Visualizer should display suspect count"
+    
+    def test_visualizer_improved_rejection_visibility(self):
+        """Test that rejection visualization is improved"""
+        with open('cone_tracker/visualizer.py', 'r') as f:
+            content = f.read()
+        
+        # Check that rejections section has improved visibility comment
+        assert 'improved visibility' in content.lower() or 'more visible' in content.lower(), \
+            "Should have comments about improved visibility"
+        
+        # Check for rectangle drawing with red color (0, 0, 255)
+        assert 'cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 2)' in content, \
+            "Should have red rectangles with thickness 2 for rejections"
+        
+        # Check for larger text (0.5 instead of 0.35)
+        assert '0.5' in content and 'reason' in content, \
+            "Should have rejection text with larger font size"
+
+
+class TestConfigChanges:
+    """Tests for config.py changes"""
+    
+    def test_default_config_has_log_rejections(self):
+        """Test that DEFAULT_CONFIG includes log_rejections"""
+        with open('cone_tracker/config.py', 'r') as f:
+            content = f.read()
+        
+        assert '"log_rejections"' in content, "DEFAULT_CONFIG should have log_rejections"
+        assert 'log_rejections' in content and 'False' in content, \
+            "log_rejections should default to False"
+    
+    def test_default_config_has_log_suspects(self):
+        """Test that DEFAULT_CONFIG includes log_suspects"""
+        with open('cone_tracker/config.py', 'r') as f:
+            content = f.read()
+        
+        assert '"log_suspects"' in content, "DEFAULT_CONFIG should have log_suspects"
+        assert 'log_suspects' in content and 'False' in content, \
+            "log_suspects should default to False"
+
+
+class TestAppChanges:
+    """Tests for app.py changes"""
+    
+    def test_app_has_rejection_logging(self):
+        """Test that app.py logs rejections when configured"""
+        with open('cone_tracker/app.py', 'r') as f:
+            content = f.read()
+        
+        # Should check for log_rejections config
+        assert 'log_rejections' in content, "app.py should check log_rejections config"
+        
+        # Should log rejections with emoji
+        assert '🔴' in content or 'Frame com' in content, \
+            "app.py should log rejection messages"
+        
+        # Should iterate over rejects
+        assert 'for bbox, reason in rejects' in content, \
+            "app.py should iterate over rejects to log them"
+    
+    def test_app_has_suspect_logging(self):
+        """Test that app.py logs suspects when configured"""
+        with open('cone_tracker/app.py', 'r') as f:
+            content = f.read()
+        
+        # Should check for log_suspects config
+        assert 'log_suspects' in content, "app.py should check log_suspects config"
+        
+        # Should log suspects with emoji
+        assert '🟡' in content or 'suspects' in content.lower(), \
+            "app.py should log suspect messages"
+        
+        # Should filter for SUSPECT state
+        assert 'ConeState.SUSPECT' in content, \
+            "app.py should filter tracks by SUSPECT state"
+
+
+class TestREADMEChanges:
+    """Tests for README.md changes"""
+    
+    def test_readme_has_debugging_section(self):
+        """Test that README has debugging section"""
+        with open('README.md', 'r') as f:
+            content = f.read()
+        
+        assert 'Debugging e Visualização' in content or 'Debug' in content, \
+            "README should have debugging section"
+    
+    def test_readme_documents_log_rejections(self):
+        """Test that README documents log_rejections option"""
+        with open('README.md', 'r') as f:
+            content = f.read()
+        
+        assert 'log_rejections' in content, \
+            "README should document log_rejections option"
+    
+    def test_readme_documents_log_suspects(self):
+        """Test that README documents log_suspects option"""
+        with open('README.md', 'r') as f:
+            content = f.read()
+        
+        assert 'log_suspects' in content, \
+            "README should document log_suspects option"
+    
+    def test_readme_has_example_logs(self):
+        """Test that README includes example log output"""
+        with open('README.md', 'r') as f:
+            content = f.read()
+        
+        # Should have example showing rejection emoji
+        assert '🔴' in content or 'rejeições' in content.lower(), \
+            "README should show rejection log examples"
+        
+        # Should have example showing suspect emoji
+        assert '🟡' in content or 'suspects' in content.lower(), \
+            "README should show suspect log examples"
+
+
+if __name__ == "__main__":
+    # Simple test runner
+    test_classes = [TestVisualizerChanges, TestConfigChanges, TestAppChanges, TestREADMEChanges]
+    
+    total_tests = 0
+    passed_tests = 0
+    failed_tests = []
+    
+    for test_class in test_classes:
+        test_instance = test_class()
+        test_methods = [method for method in dir(test_instance) if method.startswith('test_')]
+        
+        for method_name in test_methods:
+            total_tests += 1
+            try:
+                method = getattr(test_instance, method_name)
+                method()
+                passed_tests += 1
+                print(f"✓ {test_class.__name__}.{method_name}")
+            except AssertionError as e:
+                failed_tests.append((test_class.__name__, method_name, str(e)))
+                print(f"✗ {test_class.__name__}.{method_name}: {e}")
+            except Exception as e:
+                failed_tests.append((test_class.__name__, method_name, str(e)))
+                print(f"✗ {test_class.__name__}.{method_name}: {e}")
+    
+    print(f"\n{'='*60}")
+    print(f"Tests: {passed_tests}/{total_tests} passed")
+    
+    if failed_tests:
+        print(f"\nFailed tests:")
+        for class_name, method_name, error in failed_tests:
+            print(f"  - {class_name}.{method_name}: {error}")
+        exit(1)
+    else:
+        print("\nAll tests passed! ✓")
+        exit(0)
