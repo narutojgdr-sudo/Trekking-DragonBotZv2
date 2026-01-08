@@ -175,6 +175,8 @@ class TestHeadlessExecution:
         self, mock_load_config, mock_video_capture, mock_imshow
     ):
         """Test that cv2.error from imshow is caught and handled gracefully"""
+        import numpy as np
+        
         # Mock config with show_windows enabled
         mock_config = copy.deepcopy(DEFAULT_CONFIG)
         mock_config["debug"]["show_windows"] = True
@@ -183,8 +185,9 @@ class TestHeadlessExecution:
         # Mock VideoCapture
         mock_cap = MagicMock()
         mock_cap.isOpened.return_value = True
-        # Return one frame, then fail
-        mock_cap.read.side_effect = [(True, MagicMock(shape=(540, 960, 3))), (False, None)]
+        # Return one valid frame, then fail
+        fake_frame = np.zeros((540, 960, 3), dtype=np.uint8)
+        mock_cap.read.side_effect = [(True, fake_frame), (False, None)]
         mock_video_capture.return_value = mock_cap
         
         # Mock cv2.imshow to raise cv2.error (headless environment)
