@@ -4,6 +4,9 @@
 
 # Example: cp cone_config.yaml.example cone_config.yaml
 
+camera:
+  video_path: ""  # Caminho para vídeo (ex: "videos/teste_cones.mp4"). Deixe vazio para usar câmera
+
 tracking:
   # FIX PRINCIPAL: Aumentar timeout para evitar deleção prematura de tracks
   lost_timeout: 3.0              # 3 segundos (90 frames a 30fps) ao invés de 0.6

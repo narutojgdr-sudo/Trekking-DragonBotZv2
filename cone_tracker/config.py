@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 # =========================
 DEFAULT_CONFIG: Dict[str, Any] = {
     "camera": {
+        "video_path": "",  # Caminho para vídeo (deixe vazio para usar câmera)
         "index": 0,
         "capture_width": 1920,
         "capture_height": 1080,

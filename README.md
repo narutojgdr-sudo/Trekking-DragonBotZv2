@@ -132,6 +132,47 @@ python3 test7.py
 
 You can also manually force a reload by pressing the **r** key.
 
+### Using Video Files Instead of Camera
+
+The system supports using pre-recorded video files as input instead of live camera feed. This is useful for testing, debugging, or processing recorded footage.
+
+**Configuration:**
+
+Edit your `cone_config.yaml` file and set the `video_path` parameter:
+
+```yaml
+camera:
+  video_path: "videos/teste_cones.mp4"  # Path to your video file
+  index: 0                               # Camera index (used as fallback)
+  # ... other settings
+```
+
+**Behavior:**
+
+1. **Video file exists**: The system will use the video file and display `"📹 Usando vídeo: {path}"`
+2. **Video file doesn't exist**: The system shows a warning and automatically falls back to the camera
+3. **Empty video_path**: The system uses the camera (default behavior)
+4. **Video reaches end**: The video automatically loops from the beginning
+
+**Important Notes:**
+
+- Camera settings (`capture_width`, `capture_height`, `fps`) are **not applied** to video files (they use the video's native properties)
+- Video files automatically loop when they reach the end
+- The fallback to camera is automatic if the video file is not found
+- Leave `video_path` empty (`""`) to use the camera directly
+
+**Example:**
+
+```yaml
+camera:
+  video_path: "videos/teste_cones.mp4"  # Use video file
+  # video_path: ""                       # Use camera (empty or omitted)
+  index: 0
+  capture_width: 1280
+  capture_height: 720
+  fps: 30
+```
+
 ### As a Library
 
 You can also import and use the modules programmatically:
@@ -158,7 +199,7 @@ confirmed = tracker.confirmed_tracks()
 
 The system uses YAML configuration files (`cone_config.yaml`). Key configuration sections:
 
-- **camera**: Camera settings (resolution, FPS, device index)
+- **camera**: Camera settings (resolution, FPS, device index, video file path)
 - **debug**: Visualization options
 - **hsv_orange**: HSV color thresholds for orange detection
 - **morphology**: Morphological operation parameters
