@@ -37,6 +37,11 @@ class Track:
         """Get bounding box as (x, y, w, h)."""
         return (int(self.cx - self.w / 2), int(self.cy - self.h / 2), int(self.w), int(self.h))
 
+    @property
+    def frames_seen(self) -> int:
+        """Get the number of frames this track has been seen."""
+        return len(self.score_hist)
+
     def avg_score(self) -> float:
         """Get average score from history."""
         if not self.score_hist:

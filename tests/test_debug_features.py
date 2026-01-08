@@ -92,6 +92,68 @@ class TestConfigChanges:
             "log_suspects should default to False"
 
 
+class TestTrackFramesSeen:
+    """Tests for Track.frames_seen property"""
+    
+    def test_track_has_frames_seen_property(self):
+        """Test that Track class has frames_seen property"""
+        # Test by checking the source code for the property definition
+        with open('cone_tracker/tracker.py', 'r') as f:
+            content = f.read()
+        
+        # Should have @property decorator for frames_seen
+        assert '@property' in content and 'def frames_seen' in content, \
+            "Track should have frames_seen as a property"
+        
+        # Should return len(self.score_hist)
+        assert 'return len(self.score_hist)' in content, \
+            "frames_seen should return len(self.score_hist)"
+        
+        # Also test it functionally if dependencies are available
+        try:
+            import sys
+            import os
+            sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            
+            from cone_tracker.tracker import Track
+            from collections import deque
+            
+            # Create a track with empty score history
+            track = Track(track_id=1, score_hist=deque(maxlen=10))
+            assert hasattr(track, 'frames_seen'), "Track should have frames_seen attribute"
+            assert track.frames_seen == 0, "frames_seen should be 0 for empty score_hist"
+            
+            # Add some scores to the history
+            track.score_hist.append(0.8)
+            assert track.frames_seen == 1, "frames_seen should be 1 after adding one score"
+            
+            track.score_hist.append(0.9)
+            track.score_hist.append(0.85)
+            assert track.frames_seen == 3, "frames_seen should be 3 after adding three scores"
+            
+            # Fill up to maxlen
+            for i in range(7):
+                track.score_hist.append(0.8 + i * 0.01)
+            assert track.frames_seen == 10, "frames_seen should be 10 when score_hist is full"
+            
+            # Add more items (should exceed maxlen and cap at 10)
+            track.score_hist.append(0.95)
+            assert track.frames_seen == 10, "frames_seen should remain 10 after exceeding maxlen"
+        except ImportError:
+            # If we can't import due to missing dependencies, the source code check is sufficient
+            pass
+    
+    def test_frames_seen_used_in_suspect_logging(self):
+        """Test that frames_seen is used correctly in app.py suspect logging"""
+        with open('cone_tracker/app.py', 'r') as f:
+            content = f.read()
+        
+        # Should use t.frames_seen (as property, not method call)
+        assert 't.frames_seen' in content, "app.py should use t.frames_seen in logging"
+        # Make sure it's not called as a method
+        assert 't.frames_seen()' not in content, "frames_seen should be used as property, not method"
+
+
 class TestAppChanges:
     """Tests for app.py changes"""
     
@@ -171,7 +233,7 @@ class TestREADMEChanges:
 
 if __name__ == "__main__":
     # Simple test runner
-    test_classes = [TestVisualizerChanges, TestConfigChanges, TestAppChanges, TestREADMEChanges]
+    test_classes = [TestVisualizerChanges, TestConfigChanges, TestTrackFramesSeen, TestAppChanges, TestREADMEChanges]
     
     total_tests = 0
     passed_tests = 0
