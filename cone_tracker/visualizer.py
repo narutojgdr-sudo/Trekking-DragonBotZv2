@@ -29,19 +29,25 @@ class Visualizer:
 
     def draw(self, frame: np.ndarray, tracks: List[Track], rejects: List[Tuple[Tuple[int, int, int, int], str]], fps: float, config_reload_msg: str = None):
         """Draw tracking visualization on frame."""
-        if not self.cfg["show_windows"]:
-            return frame
-
+        # Always draw annotations (for both video output and windows)
+        # The show_windows flag only controls whether to display windows, not whether to draw
+        
         # FPS
         cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         
-        # Tracks info
+        # Tracks info (improved with suspects)
         confirmed_count = sum(1 for t in tracks if t.state == ConeState.CONFIRMED)
-        cv2.putText(frame, f"Tracks: {len(tracks)} ({confirmed_count} confirmed)", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        suspect_count = sum(1 for t in tracks if t.state == ConeState.SUSPECT)
+        cv2.putText(frame, f"Tracks: {len(tracks)} ({confirmed_count} conf, {suspect_count} susp)", 
+                    (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
         
-        # Config reload message (if there is one)
+        # Add rejection counter
+        cv2.putText(frame, f"Rejects: {len(rejects)}", 
+                    (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        
+        # Config reload message (adjusted Y position)
         if config_reload_msg:
-            cv2.putText(frame, config_reload_msg, (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+            cv2.putText(frame, config_reload_msg, (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
 
         # draw tracks
         for t in tracks:
@@ -64,11 +70,14 @@ class Visualizer:
                 2,
             )
 
-        # rejections (optional)
+        # rejections - improved visibility
         if self.cfg.get("show_rejection_reason", False):
             for bbox, reason in rejects:
                 x, y, w, h = bbox
-                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 1)
-                cv2.putText(frame, reason, (x, y + h + 12), cv2.FONT_HERSHEY_SIMPLEX, 0.35, (0, 0, 255), 1)
+                # More visible rectangle (thickness 2)
+                cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 2)
+                # Larger, more readable text
+                cv2.putText(frame, reason, (x, max(0, y - 5)), 
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
         return frame

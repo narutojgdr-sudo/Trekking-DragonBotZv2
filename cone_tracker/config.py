@@ -30,6 +30,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "show_rejection_reason": False,
         "draw_suspects": False,     # if True, draws SUSPECT in yellow as well
         "show_groups": False,
+        "log_rejections": False,    # Log rejections to console
+        "log_suspects": False,      # Log suspects to console
     },
     "hsv_orange": {
         "low_1": [0, 90, 90],

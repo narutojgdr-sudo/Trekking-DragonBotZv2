@@ -126,7 +126,23 @@ class App:
                 proc = cv2.resize(frame, (cam["process_width"], cam["process_height"]))
 
                 detections, mask, rejects = self.detector.detect(proc)
+                
+                # Log rejections if configured
+                if rejects and self.config["debug"].get("log_rejections", False):
+                    logger.info(f"🔴 Frame com {len(rejects)} rejeições:")
+                    for bbox, reason in rejects[:5]:  # Show up to 5 rejections
+                        logger.info(f"   ✗ {reason}")
+                
                 self.tracker.update(detections)
+                
+                # Log suspects after tracking
+                if self.config["debug"].get("log_suspects", False):
+                    from .utils import ConeState
+                    suspects = [t for t in self.tracker.tracks if t.state == ConeState.SUSPECT]
+                    if suspects:
+                        logger.info(f"🟡 Frame com {len(suspects)} suspects:")
+                        for t in suspects[:5]:  # Show up to 5 suspects
+                            logger.info(f"   ? ID {t.track_id}: frames={t.frames_seen}, avg={t.avg_score():.2f}")
 
                 now = time.time()
                 fps = 1.0 / (now - t_last + 1e-6)

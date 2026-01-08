@@ -379,9 +379,82 @@ The tracker logs important events:
 
 The visualization displays:
 - **FPS**: Current frames per second
-- **Track Count**: Total tracks and confirmed tracks (e.g., "Tracks: 3 (2 confirmed)")
+- **Track Count**: Total tracks, confirmed tracks, and suspects (e.g., "Tracks: 3 (2 conf, 1 susp)")
+- **Rejects Count**: Number of rejected detections in the current frame
 - **Track Details**: ID, state (CONFIRMED/SUSPECT), and average score for each track
 - **Config Reload Message**: Temporary message when config is reloaded
+
+## Debugging e Visualização
+
+### Opções de Debug
+
+Configure no `cone_config.yaml`:
+
+```yaml
+debug:
+  show_windows: false          # Mostrar janelas (requer GUI)
+  show_mask: false             # Mostrar máscara de cor
+  show_rejection_reason: true  # Mostrar rejeições no vídeo (retângulos vermelhos)
+  draw_suspects: true          # Mostrar suspects no vídeo (retângulos amarelos)
+  log_rejections: true         # Log de rejeições no console
+  log_suspects: true           # Log de suspects no console
+```
+
+### Entendendo os Logs
+
+**Rejeições (🔴)**: Detecções que não passaram na validação geométrica
+- `area=850` - Área muito pequena ou grande
+- `aspect=0.8` - Aspect ratio fora do range
+- `fill=0.82` - Fill ratio muito alto/baixo
+- `profile=0.28` - Perfil não parece cone
+- `score=0.32` - Score final muito baixo
+
+**Suspects (🟡)**: Tracks detectados mas ainda não confirmados
+- Precisam de `min_frames_for_confirm` frames consecutivos
+- Score médio deve ser >= `confirm_avg_score`
+
+**Tracks Deletados (🗑️)**: Tracks perdidos ou com score muito baixo
+
+### Exemplo de Uso
+
+Com as mudanças, o usuário poderá:
+
+```yaml
+# Configuração para debug intensivo
+debug:
+  show_windows: false
+  show_mask: false
+  show_rejection_reason: true   # Ver no vídeo
+  draw_suspects: true           # Ver no vídeo
+  log_rejections: true          # Ver no console
+  log_suspects: true            # Ver no console
+
+camera:
+  video_path: "teste.mp4"
+  output_video_path: "debug_output.mp4"
+```
+
+**Saída esperada no console:**
+```
+2026-01-08 12:45:30 - INFO - 📹 Usando vídeo: teste.mp4
+2026-01-08 12:45:30 - INFO - 💾 Salvando vídeo processado em: debug_output.mp4
+2026-01-08 12:45:31 - INFO - 🔴 Frame com 3 rejeições:
+2026-01-08 12:45:31 - INFO -    ✗ score=0.28
+2026-01-08 12:45:31 - INFO -    ✗ area=650
+2026-01-08 12:45:31 - INFO -    ✗ fill=0.85
+2026-01-08 12:45:32 - INFO - 🟡 Frame com 2 suspects:
+2026-01-08 12:45:32 - INFO -    ? ID 1: frames=3, avg=0.42
+2026-01-08 12:45:32 - INFO -    ? ID 2: frames=2, avg=0.38
+2026-01-08 12:45:33 - INFO - ✅ Track 0 CONFIRMADO! frames=6, avg=0.70
+```
+
+### Benefícios
+
+✅ Facilita debugging de detecções  
+✅ Entender por que cones não são detectados  
+✅ Ajustar parâmetros baseado em dados reais  
+✅ Vídeos salvos sempre mostram informações (independente de `show_windows`)  
+✅ Logs opcionais não poluem console em produção
 
 ## Troubleshooting
 
