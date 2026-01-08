@@ -1,6 +1,8 @@
 """
 Unit tests for video input functionality in cone_tracker
 """
+import copy
+import cv2
 import os
 import tempfile
 from unittest.mock import Mock, patch, MagicMock
@@ -60,7 +62,7 @@ class TestVideoInputLogic:
     def test_uses_video_when_path_exists(self, mock_load_config, mock_exists, mock_video_capture):
         """Test that app uses video file when path exists"""
         # Mock config with video path
-        mock_config = DEFAULT_CONFIG.copy()
+        mock_config = copy.deepcopy(DEFAULT_CONFIG)
         mock_config["camera"]["video_path"] = "test_video.mp4"
         mock_load_config.return_value = mock_config
         
@@ -90,7 +92,7 @@ class TestVideoInputLogic:
     def test_uses_camera_when_video_path_empty(self, mock_load_config, mock_exists, mock_video_capture):
         """Test that app uses camera when video_path is empty"""
         # Mock config with empty video path
-        mock_config = DEFAULT_CONFIG.copy()
+        mock_config = copy.deepcopy(DEFAULT_CONFIG)
         mock_config["camera"]["video_path"] = ""
         mock_load_config.return_value = mock_config
         
@@ -109,7 +111,6 @@ class TestVideoInputLogic:
             pass  # Expected to fail when trying to read frames
         
         # Verify VideoCapture was called with camera index and V4L2 backend
-        import cv2
         mock_video_capture.assert_called_with(0, cv2.CAP_V4L2)
     
     @patch('cone_tracker.app.cv2.VideoCapture')
@@ -118,7 +119,7 @@ class TestVideoInputLogic:
     def test_fallback_to_camera_when_video_not_found(self, mock_load_config, mock_exists, mock_video_capture):
         """Test that app falls back to camera when video file doesn't exist"""
         # Mock config with video path
-        mock_config = DEFAULT_CONFIG.copy()
+        mock_config = copy.deepcopy(DEFAULT_CONFIG)
         mock_config["camera"]["video_path"] = "nonexistent_video.mp4"
         mock_load_config.return_value = mock_config
         
@@ -140,5 +141,4 @@ class TestVideoInputLogic:
             pass  # Expected to fail when trying to read frames
         
         # Verify VideoCapture was called with camera (fallback), not video path
-        import cv2
         mock_video_capture.assert_called_with(0, cv2.CAP_V4L2)
