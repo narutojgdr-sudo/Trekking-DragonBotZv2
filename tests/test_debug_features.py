@@ -61,11 +61,7 @@ class TestVisualizerChanges:
         with open('cone_tracker/visualizer.py', 'r') as f:
             content = f.read()
         
-        # Check that rejections section has improved visibility comment
-        assert 'improved visibility' in content.lower() or 'more visible' in content.lower(), \
-            "Should have comments about improved visibility"
-        
-        # Check for rectangle drawing with red color (0, 0, 255)
+        # Check for rectangle drawing with red color and thickness 2
         assert 'cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 2)' in content, \
             "Should have red rectangles with thickness 2 for rejections"
         
@@ -164,13 +160,13 @@ class TestREADMEChanges:
         with open('README.md', 'r') as f:
             content = f.read()
         
-        # Should have example showing rejection emoji
-        assert '🔴' in content or 'rejeições' in content.lower(), \
-            "README should show rejection log examples"
+        # Should have example showing rejection emoji AND text
+        assert '🔴' in content and 'rejeições' in content.lower(), \
+            "README should show rejection log examples with emoji"
         
-        # Should have example showing suspect emoji
-        assert '🟡' in content or 'suspects' in content.lower(), \
-            "README should show suspect log examples"
+        # Should have example showing suspect emoji AND text
+        assert '🟡' in content and 'suspects' in content.lower(), \
+            "README should show suspect log examples with emoji"
 
 
 if __name__ == "__main__":

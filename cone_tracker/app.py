@@ -9,6 +9,7 @@ import cv2
 from .config import load_config, save_config, watch_config
 from .detector import ConeDetector
 from .tracker import MultiConeTracker
+from .utils import ConeState
 from .visualizer import Visualizer
 
 logger = logging.getLogger(__name__)
@@ -137,7 +138,6 @@ class App:
                 
                 # Log suspects after tracking
                 if self.config["debug"].get("log_suspects", False):
-                    from .utils import ConeState
                     suspects = [t for t in self.tracker.tracks if t.state == ConeState.SUSPECT]
                     if suspects:
                         logger.info(f"🟡 Frame com {len(suspects)} suspects:")
