@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Main application for cone tracking."""
 import logging
+import os
 import time
 
 import cv2
@@ -41,14 +42,34 @@ class App:
     def run(self):
         """Run the main application loop."""
         cam = self.config["camera"]
-        cap = cv2.VideoCapture(cam["index"], cv2.CAP_V4L2)
+        
+        # Check if video_path is configured and file exists
+        video_path = cam.get("video_path", "")
+        using_video = False
+        
+        if video_path and os.path.exists(video_path):
+            # Use video file
+            cap = cv2.VideoCapture(video_path)
+            using_video = True
+            logger.info(f"📹 Usando vídeo: {video_path}")
+        elif video_path and not os.path.exists(video_path):
+            # Video path specified but file doesn't exist - warn and fallback to camera
+            logger.warning(f"⚠️  Vídeo não encontrado: {video_path}. Usando câmera como fallback.")
+            cap = cv2.VideoCapture(cam["index"], cv2.CAP_V4L2)
+            logger.info(f"📷 Usando câmera: index {cam['index']}")
+        else:
+            # No video path or empty - use camera
+            cap = cv2.VideoCapture(cam["index"], cv2.CAP_V4L2)
+            logger.info(f"📷 Usando câmera: index {cam['index']}")
 
         if not cap.isOpened():
             raise RuntimeError("Camera failed to open (cap.isOpened() == False)")
 
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, cam["capture_width"])
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cam["capture_height"])
-        cap.set(cv2.CAP_PROP_FPS, cam["fps"])
+        # Only apply camera settings if not using video file
+        if not using_video:
+            cap.set(cv2.CAP_PROP_FRAME_WIDTH, cam["capture_width"])
+            cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cam["capture_height"])
+            cap.set(cv2.CAP_PROP_FPS, cam["fps"])
 
         t_last = time.time()
         fail_count = 0
@@ -70,12 +91,22 @@ class App:
                 
                 ret, frame = cap.read()
                 if not ret:
-                    fail_count += 1
-                    if fail_count >= max_fail:
-                        logger.error("Too many consecutive camera read failures. Exiting.")
-                        break
-                    time.sleep(0.01)
-                    continue
+                    # If using video and reached end, restart it
+                    if using_video:
+                        logger.info("🔄 Reiniciando vídeo...")
+                        cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                        ret, frame = cap.read()
+                        if not ret:
+                            logger.error("Failed to restart video. Exiting.")
+                            break
+                    else:
+                        # Camera read failure
+                        fail_count += 1
+                        if fail_count >= max_fail:
+                            logger.error("Too many consecutive camera read failures. Exiting.")
+                            break
+                        time.sleep(0.01)
+                        continue
                 fail_count = 0
 
                 proc = cv2.resize(frame, (cam["process_width"], cam["process_height"]))
