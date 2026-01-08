@@ -76,7 +76,7 @@ class App:
         output_path = cam.get("output_video_path", "")
         if output_path:
             fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Codec MP4
-            fps_out = 30  # FPS do vídeo de saída
+            fps_out = cam.get("fps", 30)  # Use camera FPS setting
             size = (cam["process_width"], cam["process_height"])  # Tamanho do frame processado
             video_writer = cv2.VideoWriter(output_path, fourcc, fps_out, size)
             if video_writer.isOpened():
@@ -165,5 +165,5 @@ class App:
                 logger.info(f"✅ Vídeo processado salvo em: {output_path}")
             try:
                 cv2.destroyAllWindows()
-            except:
+            except (cv2.error, Exception):
                 pass  # Ignorar se GUI não estiver disponível

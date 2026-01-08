@@ -94,7 +94,7 @@ class TestVideoOutputLogic:
         mock_video_writer.assert_called_once()
         call_args = mock_video_writer.call_args
         assert call_args[0][0] == "output.mp4"  # output path
-        assert call_args[0][2] == 30  # fps
+        assert call_args[0][2] == mock_config["camera"]["fps"]  # fps from config
         assert call_args[0][3] == (960, 540)  # size from process_width/height
     
     @patch('cone_tracker.app.cv2.VideoWriter')
