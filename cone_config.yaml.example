@@ -6,6 +6,7 @@
 
 camera:
   video_path: ""  # Caminho para vídeo (ex: "videos/teste_cones.mp4"). Deixe vazio para usar câmera
+  output_video_path: ""  # Caminho para salvar vídeo processado (ex: "output_result.mp4"). Deixe vazio para não salvar
 
 tracking:
   # FIX PRINCIPAL: Aumentar timeout para evitar deleção prematura de tracks

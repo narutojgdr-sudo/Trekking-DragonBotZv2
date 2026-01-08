@@ -70,6 +70,20 @@ class App:
             cap.set(cv2.CAP_PROP_FRAME_WIDTH, cam["capture_width"])
             cap.set(cv2.CAP_PROP_FRAME_HEIGHT, cam["capture_height"])
             cap.set(cv2.CAP_PROP_FPS, cam["fps"])
+        
+        # Setup video writer if output path is configured
+        video_writer = None
+        output_path = cam.get("output_video_path", "")
+        if output_path:
+            fourcc = cv2.VideoWriter_fourcc(*'mp4v')  # Codec MP4
+            fps_out = 30  # FPS do vídeo de saída
+            size = (cam["process_width"], cam["process_height"])  # Tamanho do frame processado
+            video_writer = cv2.VideoWriter(output_path, fourcc, fps_out, size)
+            if video_writer.isOpened():
+                logger.info(f"💾 Salvando vídeo processado em: {output_path}")
+            else:
+                logger.warning(f"⚠️ Não foi possível criar arquivo de vídeo: {output_path}")
+                video_writer = None
 
         t_last = time.time()
         fail_count = 0
@@ -121,19 +135,35 @@ class App:
                 # Only CONFIRMED tracks by default (cfg.draw_suspects controls)
                 tracks_to_draw = self.tracker.tracks if self.config["debug"].get("draw_suspects", False) else self.tracker.confirmed_tracks()
                 out = self.vis.draw(proc.copy(), tracks_to_draw, rejects, fps, self.config_reload_msg)
+                
+                # Salvar frame processado se video_writer estiver configurado
+                if video_writer is not None:
+                    video_writer.write(out)
 
                 if self.config["debug"]["show_windows"]:
-                    cv2.imshow("Tracker", out)
-                    if self.config["debug"]["show_mask"]:
-                        cv2.imshow("Mask", mask)
+                    try:
+                        cv2.imshow("Tracker", out)
+                        if self.config["debug"]["show_mask"]:
+                            cv2.imshow("Mask", mask)
 
-                    k = cv2.waitKey(1) & 0xFF
-                    if k == ord("q"):
-                        break
-                    if k == ord("s"):
-                        save_config(self.config)
-                    if k == ord("r"):
-                        self.reload_config()
+                        k = cv2.waitKey(1) & 0xFF
+                        if k == ord("q"):
+                            break
+                        if k == ord("s"):
+                            save_config(self.config)
+                        if k == ord("r"):
+                            self.reload_config()
+                    except cv2.error as e:
+                        logger.warning(f"⚠️ Não foi possível mostrar janelas (ambiente sem GUI): {e}")
+                        logger.info("💡 Dica: Desabilite 'show_windows' no config ou use 'output_video_path'")
+                        # Continue processing but stop trying to show windows
+                        self.config["debug"]["show_windows"] = False
         finally:
             cap.release()
-            cv2.destroyAllWindows()
+            if video_writer is not None:
+                video_writer.release()
+                logger.info(f"✅ Vídeo processado salvo em: {output_path}")
+            try:
+                cv2.destroyAllWindows()
+            except:
+                pass  # Ignorar se GUI não estiver disponível

@@ -173,6 +173,99 @@ camera:
   fps: 30
 ```
 
+### Headless Execution (Servers, Docker, SSH)
+
+The system supports running in headless environments without a GUI (servers, Docker containers, SSH without X11 forwarding). This allows you to process videos and save the results without needing a display.
+
+#### Saving Processed Video
+
+To save the processed video to a file, configure the `output_video_path` in your `cone_config.yaml`:
+
+```yaml
+camera:
+  video_path: "input_video.mp4"          # Input video
+  output_video_path: "output_result.mp4" # Output processed video
+  process_width: 960
+  process_height: 540
+  # ... other settings
+
+debug:
+  show_windows: false  # Disable GUI windows for headless
+  show_mask: false
+```
+
+**Features:**
+- ✅ Saves processed video with tracking overlays
+- ✅ Works in Docker/containers/SSH
+- ✅ MP4 format with H.264 codec
+- ✅ Maintains process resolution settings
+- ✅ Logs progress and completion
+
+#### Configuration Examples
+
+**Headless Server (no GUI):**
+```yaml
+camera:
+  video_path: "input.mp4"
+  output_video_path: "processed_output.mp4"
+  
+debug:
+  show_windows: false  # Must be false for headless
+  show_mask: false
+```
+
+**GUI Environment (display output):**
+```yaml
+camera:
+  video_path: "input.mp4"
+  output_video_path: ""  # Empty = don't save, just display
+  
+debug:
+  show_windows: true  # Show live windows
+  show_mask: true
+```
+
+**Both Save AND Display:**
+```yaml
+camera:
+  video_path: "input.mp4"
+  output_video_path: "processed_output.mp4"  # Save to file
+  
+debug:
+  show_windows: true  # Also show windows
+  show_mask: true
+```
+
+#### Troubleshooting GUI Errors
+
+**Error:**
+```
+cv2.error: The function is not implemented. Rebuild the library with Windows, GTK+ 2.x or Cocoa support.
+```
+
+**Cause:** Your environment doesn't have GUI support (headless server, Docker, SSH without X11).
+
+**Solutions:**
+
+1. **Disable window display** in `cone_config.yaml`:
+   ```yaml
+   debug:
+     show_windows: false
+     show_mask: false
+   ```
+
+2. **Save video output instead**:
+   ```yaml
+   camera:
+     output_video_path: "output.mp4"
+   ```
+
+3. **For Docker**: Run with `--display` flag or use VNC if you need GUI
+
+4. **For SSH**: Enable X11 forwarding with `ssh -X` or use headless mode
+
+**Note:** The system gracefully handles GUI errors and will automatically disable window display if it detects a headless environment, while continuing to process and save video.
+
 ### As a Library
 
 You can also import and use the modules programmatically:
@@ -199,7 +292,7 @@ confirmed = tracker.confirmed_tracks()
 
 The system uses YAML configuration files (`cone_config.yaml`). Key configuration sections:
 
-- **camera**: Camera settings (resolution, FPS, device index, video file path)
+- **camera**: Camera settings (resolution, FPS, device index, video file path, output video path)
 - **debug**: Visualization options
 - **hsv_orange**: HSV color thresholds for orange detection
 - **morphology**: Morphological operation parameters
@@ -209,6 +302,10 @@ The system uses YAML configuration files (`cone_config.yaml`). Key configuration
 - **tracking**: Tracker parameters (association distance, EMA alpha, etc.)
 - **clahe**: Contrast enhancement settings
 - **color**: Advanced color processing options
+
+**Important Camera Settings:**
+- `video_path`: Path to input video file (empty string uses camera)
+- `output_video_path`: Path to save processed video (empty string disables saving)
 
 ### Optimized Tracking Parameters
 
