@@ -55,6 +55,12 @@ class App:
         
         # Get HFOV from config with fallback to 70 degrees
         hfov_deg = self.config["camera"].get("hfov_deg", 70.0)
+        
+        # Validate HFOV is in a reasonable range (10-170 degrees)
+        if hfov_deg < 10.0 or hfov_deg > 170.0:
+            logger.warning(f"Invalid hfov_deg={hfov_deg}, using fallback of 70.0")
+            hfov_deg = 70.0
+        
         hfov_rad = math.radians(hfov_deg)
         
         # Compute focal length using pinhole model: focal = (width/2) / tan(hfov/2)
@@ -85,7 +91,8 @@ class App:
             msg = f"HEADING_DBG: detected=True id={track.track_id} cx={track.cx:.1f} err_px={err_px:+.1f} err_deg={angle_deg:+.2f} bbox_h={int(track.h)}"
             
             # Optionally estimate distance if cone height is provided
-            if cone_height_m is not None and track.h > 0:
+            # Use threshold of 1.0 pixel to avoid unrealistic distance calculations
+            if cone_height_m is not None and track.h > 1.0:
                 # Pinhole model: distance = (real_height * focal_length) / pixel_height
                 est_dist_m = (cone_height_m * focal_px) / track.h
                 msg += f" est_dist={est_dist_m:.2f}m"
