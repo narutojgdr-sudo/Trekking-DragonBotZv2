@@ -15,6 +15,9 @@ from .visualizer import Visualizer
 
 logger = logging.getLogger(__name__)
 
+# Constants for debug heading calculations
+MIN_BBOX_HEIGHT_FOR_DISTANCE = 1.0  # Minimum bbox height (px) to compute distance estimate
+
 
 # =========================
 # APP
@@ -83,16 +86,16 @@ class App:
             err_px = track.cx - center_x
             
             # Convert pixel error to angle using the horizontal field of view
-            # Using atan2 for proper handling of signs (equivalent to atan(err_px/focal_px) since focal_px > 0)
-            angle_rad = math.atan2(err_px, focal_px)
+            # angle = arctan(opposite/adjacent) = arctan(err_px / focal_px)
+            angle_rad = math.atan(err_px / focal_px)
             angle_deg = math.degrees(angle_rad)
             
             # Build log message
             msg = f"HEADING_DBG: detected=True id={track.track_id} cx={track.cx:.1f} err_px={err_px:+.1f} err_deg={angle_deg:+.2f} bbox_h={int(track.h)}"
             
             # Optionally estimate distance if cone height is provided
-            # Use threshold of 1.0 pixel to avoid unrealistic distance calculations
-            if cone_height_m is not None and track.h > 1.0:
+            # Use threshold to avoid unrealistic distance calculations for very small bboxes
+            if cone_height_m is not None and track.h > MIN_BBOX_HEIGHT_FOR_DISTANCE:
                 # Pinhole model: distance = (real_height * focal_length) / pixel_height
                 est_dist_m = (cone_height_m * focal_px) / track.h
                 msg += f" est_dist={est_dist_m:.2f}m"
