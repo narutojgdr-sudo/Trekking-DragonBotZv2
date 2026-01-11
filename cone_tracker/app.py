@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Main application for cone tracking."""
 import logging
+import math
 import os
 import time
 
@@ -39,6 +40,63 @@ class App:
         self.config_reload_msg = "⚙️ Config recarregada!"
         self.config_reload_time = time.time()
         logger.info("✅ Configuração recarregada com sucesso!")
+
+    def _debug_print_heading(self, tracks: list, frame_w: int):
+        """
+        Print human-friendly heading/steering debug info to terminal.
+        
+        Args:
+            tracks: List of Track objects to debug print
+            frame_w: Frame width in pixels (for center calculation)
+        """
+        # Check if debug printing is enabled
+        if not self.config["debug"].get("print_heading", False):
+            return
+        
+        # Get HFOV from config with fallback to 70 degrees
+        hfov_deg = self.config["camera"].get("hfov_deg", 70.0)
+        hfov_rad = math.radians(hfov_deg)
+        
+        # Compute focal length using pinhole model: focal = (width/2) / tan(hfov/2)
+        focal_px = (frame_w / 2.0) / math.tan(hfov_rad / 2.0)
+        
+        # Get optional cone height for distance estimation
+        cone_height_m = self.config["debug"].get("cone_height_m", None)
+        
+        # Frame center
+        center_x = frame_w / 2.0
+        
+        if not tracks:
+            # No tracks detected
+            logger.info("HEADING_DBG: detected=False")
+            return
+        
+        # Process each track
+        for track in tracks:
+            # Calculate horizontal error
+            err_px = track.cx - center_x
+            
+            # Normalize error to [-1, 1] range
+            err_norm = err_px / center_x if center_x > 0 else 0.0
+            
+            # Convert pixel error to angle using the horizontal field of view
+            # angle = arctan(err_px / focal_px)
+            angle_rad = math.atan2(err_px, focal_px)
+            angle_deg = math.degrees(angle_rad)
+            
+            # Build log message
+            msg = f"HEADING_DBG: detected=True id={track.track_id} cx={track.cx:.1f} err_px={err_px:+.1f} err_deg={angle_deg:+.2f} bbox_h={int(track.h)}"
+            
+            # Optionally estimate distance if cone height is provided
+            if cone_height_m is not None and track.h > 0:
+                # Pinhole model: distance = (real_height * focal_length) / pixel_height
+                est_dist_m = (cone_height_m * focal_px) / track.h
+                msg += f" est_dist={est_dist_m:.2f}m"
+            
+            # Add average score
+            msg += f" avg_score={track.avg_score():.2f}"
+            
+            logger.info(msg)
 
     def run(self):
         """Run the main application loop."""
@@ -135,6 +193,10 @@ class App:
                         logger.info(f"   ✗ {reason}")
                 
                 self.tracker.update(detections)
+                
+                # Debug print heading info for confirmed tracks
+                tracks_for_control = self.tracker.confirmed_tracks()
+                self._debug_print_heading(tracks_for_control, cam["process_width"])
                 
                 # Log suspects after tracking
                 if self.config["debug"].get("log_suspects", False):
