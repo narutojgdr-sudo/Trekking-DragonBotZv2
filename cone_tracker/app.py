@@ -76,11 +76,8 @@ class App:
             # Calculate horizontal error
             err_px = track.cx - center_x
             
-            # Normalize error to [-1, 1] range
-            err_norm = err_px / center_x if center_x > 0 else 0.0
-            
             # Convert pixel error to angle using the horizontal field of view
-            # angle = arctan(err_px / focal_px)
+            # Using atan2 for proper handling of signs (equivalent to atan(err_px/focal_px) since focal_px > 0)
             angle_rad = math.atan2(err_px, focal_px)
             angle_deg = math.degrees(angle_rad)
             
