@@ -16,7 +16,7 @@ from .visualizer import Visualizer
 logger = logging.getLogger(__name__)
 
 # Constants for debug heading calculations
-MIN_BBOX_HEIGHT_FOR_DISTANCE = 1.0  # Minimum bbox height (px) to compute distance estimate
+MIN_BBOX_HEIGHT_FOR_DISTANCE = 10.0  # Minimum bbox height (px) to compute distance estimate
 
 
 # =========================
