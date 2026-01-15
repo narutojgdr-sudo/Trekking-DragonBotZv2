@@ -3167,8 +3167,8 @@ US-2.1: Corrigir timeout prematuro de tracks
     - Tracks sobrevivem >= 90 frames sem detecção (3s @ 30fps)
     - Taxa de confirmação > 80% de tracks válidos
   Tarefas:
-    - [x] Atualizar DEFAULT_CONFIG lost_timeout: 3.0
-    - [ ] Atualizar cone_config.yaml.example
+    - [ ] Atualizar DEFAULT_CONFIG lost_timeout: 3.0
+    - [ ] Atualizar cone_config.yaml.example  
     - [ ] Testar com vídeos problemáticos
     - [ ] Validar taxa de confirmação
 
