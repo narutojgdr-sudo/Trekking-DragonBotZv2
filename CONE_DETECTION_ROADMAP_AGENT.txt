@@ -1,0 +1,3390 @@
+================================================================================
+ROADMAP COMPLETO E DETALHADO - SISTEMA DE DETECÇÃO DE CONES
+================================================================================
+
+Data de geração: 2026-01-15
+Gerado por: narutojgdr-sudo
+
+================================================================================
+RESUMO EXECUTIVO
+================================================================================
+
+Este documento apresenta um roadmap técnico COMPLETO e EXTENSIVAMENTE DETALHADO
+de TODAS as funcionalidades relacionadas à detecção de cones (cone detection) 
+no repositório narutojgdr-sudo/Trekking-DragonBotZv2.
+
+O sistema implementa detecção e rastreamento em tempo real de cones de trânsito
+utilizando técnicas de visão computacional baseadas em segmentação por cor e
+validação geométrica. A arquitetura é modular, permitindo fácil manutenção e
+extensão.
+
+OBJETIVO PRINCIPAL:
+Fornecer um sistema robusto de detecção de múltiplos cones em tempo real para
+aplicações de navegação autônoma, com capacidade de tracking, confirmação de
+detecções e estimativa de posição/orientação.
+
+COMPONENTES PRINCIPAIS:
+- Sistema de detecção baseado em múltiplas máscaras de cor (HSV, Lab, RG, backprojection)
+- Tracker multi-objeto com associação greedy e suavização EMA
+- Visualizador com informações de debug
+- Sistema de configuração hot-reload (YAML)
+- Suporte para entrada de vídeo e câmera
+- Saída de vídeo processado para ambientes headless
+
+
+================================================================================
+INVENTÁRIO DETALHADO - MAPA DE FUNCIONALIDADES
+================================================================================
+
+Este inventário documenta TODOS os scripts e módulos relacionados à detecção
+de cones, com descrição completa de funcionalidades, classes, funções, fluxos
+internos e interdependências.
+
+--------------------------------------------------------------------------------
+1. MÓDULO: cone_tracker/app.py
+--------------------------------------------------------------------------------
+
+CAMINHO RELATIVO: cone_tracker/app.py
+
+DESCRIÇÃO DETALHADA:
+Aplicação principal que orquestra todo o sistema de detecção e tracking de cones.
+Responsável por:
+- Inicializar e gerenciar captura de vídeo/câmera
+- Coordenar detector, tracker e visualizador
+- Implementar loop principal de processamento
+- Gerenciar configuração com hot-reload
+- Calcular e exibir informações de debug (heading, distância estimada)
+- Salvar vídeo processado quando configurado
+
+CLASSES E MÉTODOS PRINCIPAIS:
+
+Classe: App
+-----------
+Assinatura: App()
+
+Método: __init__(self)
+  - Descrição: Inicializa a aplicação carregando configuração e criando componentes
+  - Parâmetros: Nenhum
+  - Retorno: None
+  - Comportamento: 
+    * Carrega configuração via load_config()
+    * Cria instâncias de ConeDetector, MultiConeTracker e Visualizer
+    * Inicializa variáveis de controle de reload de config
+
+Método: reload_config(self)
+  - Descrição: Recarrega configuração do arquivo YAML e reinicializa componentes
+  - Parâmetros: Nenhum
+  - Retorno: None
+  - Comportamento:
+    * Recarrega config via load_config()
+    * Reinicializa detector, tracker e visualizer com nova config
+    * Define mensagem de reload para exibir por 3 segundos
+    * Registra log de sucesso
+
+Método: _debug_print_heading(self, tracks: list, frame_w: int)
+  - Descrição: Imprime informações de direção/steering para debug no terminal
+  - Parâmetros:
+    * tracks: Lista de objetos Track para processar
+    * frame_w: Largura do frame em pixels (para calcular centro)
+  - Retorno: None
+  - Comportamento:
+    * Verifica se debug print_heading está habilitado
+    * Obtém HFOV (campo de visão horizontal) da config, default 70°
+    * Valida HFOV (range 10-170°), usa fallback se inválido
+    * Calcula focal length usando modelo pinhole: focal = (width/2) / tan(hfov/2)
+    * Para cada track:
+      - Calcula erro horizontal em pixels (cx - center_x)
+      - Converte erro para ângulo: angle = arctan(err_px / focal_px)
+      - Se cone_height_m configurado e bbox_h > MIN_BBOX_HEIGHT_FOR_DISTANCE:
+        + Estima distância: dist = (cone_height * focal) / bbox_height
+      - Imprime log formatado: "HEADING_DBG: detected=True id=X cx=Y err_px=Z err_deg=W bbox_h=H [est_dist=D] avg_score=S"
+
+Método: run(self)
+  - Descrição: Loop principal da aplicação
+  - Parâmetros: Nenhum
+  - Retorno: None (loop infinito até quit)
+  - Comportamento detalhado:
+    FASE 1 - Inicialização de captura:
+      * Verifica se video_path está configurado
+      * Se vídeo existe: usa cv2.VideoCapture(video_path)
+      * Se vídeo não existe: avisa e faz fallback para câmera
+      * Se sem vídeo: usa cv2.VideoCapture(cam_index, CAP_V4L2)
+      * Valida se captura abriu (cap.isOpened())
+      * Se usando câmera: aplica configurações (width, height, fps)
+    
+    FASE 2 - Setup de saída de vídeo:
+      * Se output_video_path configurado:
+        - Cria VideoWriter com codec 'mp4v'
+        - Usa FPS e tamanho do processo
+        - Registra log de salvamento
+    
+    FASE 3 - Inicialização de controle:
+      * Inicializa contador de tempo (t_last)
+      * Contador de falhas consecutivas (fail_count)
+      * Máximo de falhas permitidas (max_fail, default 120)
+      * Inicializa watcher de config
+    
+    FASE 4 - Loop principal (while True):
+      PASSO 1: Verificar mudanças em config
+        - Chama watch_config(path)
+        - Se mudou: chama self.reload_config()
+        - Limpa mensagem de reload após 3 segundos
+      
+      PASSO 2: Capturar frame
+        - Lê frame via cap.read()
+        - Se falha e usando vídeo: reinicia do início (POS_FRAMES=0)
+        - Se falha e usando câmera: incrementa fail_count, sai se > max_fail
+        - Reseta fail_count em sucesso
+      
+      PASSO 3: Processar frame
+        - Redimensiona para process_width x process_height
+        - Chama detector.detect(proc) -> (detections, mask, rejects)
+        - Se log_rejections habilitado: registra até 5 rejeições no console
+      
+      PASSO 4: Atualizar tracker
+        - Chama tracker.update(detections)
+        - Obtém tracks confirmados via tracker.confirmed_tracks()
+        - Chama _debug_print_heading() para imprimir info de direção
+      
+      PASSO 5: Log de suspects
+        - Se log_suspects habilitado: registra até 5 suspects no console
+      
+      PASSO 6: Calcular FPS
+        - Calcula fps = 1.0 / (now - t_last)
+        - Atualiza t_last
+      
+      PASSO 7: Visualização
+        - Seleciona tracks para desenhar (todos se draw_suspects=true, senão só confirmed)
+        - Chama vis.draw() para gerar frame anotado
+        - Se video_writer ativo: escreve frame
+      
+      PASSO 8: Exibir janelas (se habilitado)
+        - Mostra janela "Tracker" com frame anotado
+        - Se show_mask: mostra janela "Mask"
+        - Processa teclas:
+          + 'q': sai do loop
+          + 's': salva config atual
+          + 'r': força reload de config
+        - Trata exceções de GUI (ambientes headless): desabilita show_windows automaticamente
+    
+    FASE 5 - Finalização (finally):
+      * Libera captura (cap.release())
+      * Se video_writer ativo: libera e registra log de sucesso
+      * Destrói janelas OpenCV (ignora erros em ambientes sem GUI)
+
+FLUXO INTERNO (PSEUDOCÓDIGO):
+```
+função run():
+  // Setup inicial
+  se video_path configurado e arquivo existe:
+    captura = VideoCapture(video_path)
+    usando_video = true
+  senão:
+    captura = VideoCapture(camera_index)
+    usando_video = false
+  
+  se output_video_path configurado:
+    video_writer = VideoWriter(output_path, codec='mp4v', fps, size)
+  
+  // Loop principal
+  enquanto verdadeiro:
+    // 1. Verificar config
+    se config mudou:
+      recarregar_config()
+    
+    // 2. Capturar
+    ret, frame = captura.ler()
+    se não ret:
+      se usando_video:
+        reiniciar_video()
+      senão:
+        incrementar_falhas()
+        se falhas > max:
+          sair
+    
+    // 3. Processar
+    frame_processado = redimensionar(frame)
+    detections, mask, rejects = detector.detect(frame_processado)
+    
+    // 4. Tracking
+    tracker.update(detections)
+    tracks_confirmados = tracker.confirmed_tracks()
+    imprimir_debug_heading(tracks_confirmados, largura_frame)
+    
+    // 5. Visualizar
+    tracks_desenhar = todos_tracks se draw_suspects senão tracks_confirmados
+    frame_saida = visualizer.draw(frame_processado, tracks_desenhar, rejects, fps)
+    
+    // 6. Salvar/mostrar
+    se video_writer:
+      video_writer.escrever(frame_saida)
+    se show_windows:
+      mostrar_janela(frame_saida)
+      processar_teclas()
+```
+
+CONEXÕES COM OUTROS COMPONENTES:
+- IMPORTA: config.load_config, config.save_config, config.watch_config
+- IMPORTA: detector.ConeDetector
+- IMPORTA: tracker.MultiConeTracker
+- IMPORTA: visualizer.Visualizer
+- IMPORTA: utils.ConeState
+- EXPORTADO VIA: cone_tracker/__init__.py (classe App)
+- CHAMADO POR: test7.py (App().run())
+
+PARÂMETROS CONFIGURÁVEIS (via cone_config.yaml):
+- camera.video_path: Caminho para arquivo de vídeo (string, vazio usa câmera)
+- camera.output_video_path: Caminho para salvar vídeo processado (string, vazio não salva)
+- camera.index: Índice da câmera (int, default 0)
+- camera.capture_width: Largura de captura (int, default 1920)
+- camera.capture_height: Altura de captura (int, default 1080)
+- camera.process_width: Largura de processamento (int, default 960)
+- camera.process_height: Altura de processamento (int, default 540)
+- camera.fps: FPS da câmera (int, default 30)
+- camera.max_consecutive_read_failures: Máximo de falhas consecutivas (int, default 120)
+- camera.hfov_deg: Campo de visão horizontal em graus (float, default 70.0)
+- debug.show_windows: Mostrar janelas GUI (bool, default true)
+- debug.show_mask: Mostrar máscara HSV (bool, default true)
+- debug.print_heading: Imprimir info de direção (bool, default false)
+- debug.cone_height_m: Altura real do cone em metros (float ou null, para estimar distância)
+- debug.draw_suspects: Desenhar tracks suspects em amarelo (bool, default false)
+- debug.log_rejections: Registrar rejeições no console (bool, default false)
+- debug.log_suspects: Registrar suspects no console (bool, default false)
+
+DEPENDÊNCIAS EXTERNAS:
+- cv2 (OpenCV): Captura de vídeo, processamento de imagem
+- logging: Sistema de logs
+- time: Medição de tempo e FPS
+- math: Cálculos trigonométricos para heading
+- os: Verificação de existência de arquivos
+
+DEPENDÊNCIAS INTERNAS:
+- cone_tracker.config
+- cone_tracker.detector
+- cone_tracker.tracker
+- cone_tracker.utils
+- cone_tracker.visualizer
+
+PONTOS DE ATENÇÃO:
+1. CONSTANTE MIN_BBOX_HEIGHT_FOR_DISTANCE (10.0): Define altura mínima do bbox
+   para calcular distância estimada. Valores muito pequenos geram estimativas
+   irrealistas.
+2. Validação de HFOV (10-170°): HFOV fora desse range usa fallback de 70°.
+   Ajustar conforme câmera real para cálculos precisos de ângulo.
+3. Tratamento de GUI em ambientes headless: O código captura cv2.error e
+   desabilita automaticamente show_windows. Ainda assim, recomenda-se
+   configurar show_windows=false para ambientes sem display.
+4. Loop de vídeo: Quando usando vídeo, ao chegar no fim, reinicia automaticamente
+   do frame 0. Útil para testes contínuos.
+5. Hot-reload de config: Mudanças no arquivo cone_config.yaml são detectadas
+   automaticamente e aplicadas sem reiniciar aplicação. Porém, isso reinicializa
+   todos os componentes, zerando histórico de tracks.
+
+LIMITAÇÕES:
+- Não suporta múltiplas câmeras simultâneas
+- Não persiste estado de tracking entre reloads de config
+- Estimativa de distância assume modelo pinhole simples (sem correção de distorção)
+- Cálculo de heading assume câmera nivelada (sem pitch/roll)
+- Não implementa gravação de logs estruturados para análise posterior
+
+RECOMENDAÇÕES TÉCNICAS:
+1. Para ambientes de produção, desabilitar debug.print_heading para reduzir
+   overhead de logs.
+2. Configurar output_video_path para capturar resultados em ambientes headless.
+3. Ajustar camera.hfov_deg conforme especificações reais da câmera para
+   cálculos precisos de ângulo.
+4. Se cone_height_m não for conhecido com precisão, deixar como null para
+   evitar estimativas de distância incorretas.
+5. Para rastreamento de cones em movimento rápido, aumentar
+   tracking.association_max_distance e ajustar tracking.ema_alpha.
+6. Em ambientes com variações de iluminação, habilitar color.enable_gray_world.
+
+
+--------------------------------------------------------------------------------
+2. MÓDULO: cone_tracker/detector.py
+--------------------------------------------------------------------------------
+
+CAMINHO RELATIVO: cone_tracker/detector.py
+
+DESCRIÇÃO DETALHADA:
+Implementa a lógica principal de detecção de cones usando segmentação por cor
+e validação geométrica. O detector usa múltiplas técnicas de segmentação de cor
+(HSV, Lab, R/G chromaticity, backprojection) combinadas via OR lógico, seguido
+de agrupamento de partes conectadas e validação geométrica rigorosa.
+
+RESPONSABILIDADES:
+- Pré-processamento de imagens (blur, CLAHE)
+- Segmentação multi-modal de cor (4 técnicas opcionais)
+- Operações morfológicas (abertura/fechamento)
+- Detecção de contornos e extração de partes
+- Agrupamento de partes verticalmente alinhadas
+- Validação geométrica (área, aspect ratio, fill ratio)
+- Cálculo de score de perfil (profile score) baseado em forma cônica
+- Retorno de detecções classificadas por score
+
+CLASSES E MÉTODOS PRINCIPAIS:
+
+Classe: ConeDetector
+--------------------
+Assinatura: ConeDetector(config: Dict[str, Any])
+
+Método: __init__(self, config: Dict[str, Any])
+  - Descrição: Inicializa detector com configuração
+  - Parâmetros:
+    * config: Dicionário de configuração completo
+  - Retorno: None
+  - Comportamento:
+    * Extrai thresholds HSV para laranja (2 ranges para wraparound em Hue)
+    * Cria kernels de morfologia (abertura e fechamento)
+    * Cria objeto CLAHE para equalização adaptativa de histograma
+    * Carrega opções de cor (gray_world, lab, rg, backprojection)
+    * Se backprojection habilitado: carrega histograma de arquivo .npy
+  - Configurações carregadas:
+    + hsv_orange.low_1, high_1, low_2, high_2: Arrays numpy [H,S,V]
+    + morphology.kernel_open, kernel_close: Tamanho dos kernels
+    + clahe.clip_limit: Limite de recorte (float, default 1.8)
+    + clahe.tile_grid_size: Tamanho da grade de tiles ([int, int])
+    + color.enable_gray_world: Habilitar normalização gray-world (bool)
+    + color.enable_lab_fallback: Habilitar máscara Lab a/b (bool)
+    + color.lab_a_range, lab_b_range: Ranges para canais Lab a e b
+    + color.enable_rg: Habilitar máscara r/g chromaticity (bool)
+    + color.rg_thresholds: Dicionário com r_min, r_max, g_min, g_max
+    + color.enable_backproj: Habilitar backprojection (bool)
+    + color.backproj_hist_path: Caminho para arquivo .npy do histograma
+    + color.backproj_thresh: Threshold de backprojection (int, default 50)
+
+Método: preprocess(self, bgr: np.ndarray) -> np.ndarray
+  - Descrição: Pré-processa imagem BGR para HSV com normalizações opcionais
+  - Parâmetros:
+    * bgr: Imagem BGR (numpy array HxWx3, uint8)
+  - Retorno: Imagem HSV pré-processada (numpy array HxWx3, uint8)
+  - Fluxo interno:
+    1. Se enable_gray_world: aplica gray_world(bgr) para normalização de cor
+    2. Aplica GaussianBlur(5x5) para reduzir ruído
+    3. Converte BGR para HSV
+    4. Separa canais H, S, V
+    5. Aplica CLAHE somente no canal V (brilho)
+    6. Recompõe e retorna imagem HSV
+
+Método: get_mask(self, bgr: np.ndarray, hsv: np.ndarray) -> np.ndarray
+  - Descrição: Combina múltiplas máscaras de cor via OR lógico
+  - Parâmetros:
+    * bgr: Imagem BGR original (para Lab, RG, backproj)
+    * hsv: Imagem HSV pré-processada
+  - Retorno: Máscara binária combinada (uint8, 0 ou 255)
+  - Fluxo interno:
+    1. MÁSCARA HSV (sempre ativa):
+       - m1 = inRange(hsv, low_1, high_1)
+       - m2 = inRange(hsv, low_2, high_2)
+       - mask_hsv = OR(m1, m2)
+       - Adiciona mask_hsv à lista de máscaras
+    
+    2. MÁSCARA LAB (se enable_lab_fallback):
+       - Converte BGR para Lab
+       - Extrai canais a e b
+       - mask_a = inRange(a, lab_a_range)
+       - mask_b = inRange(b, lab_b_range)
+       - mask_lab = AND(mask_a, mask_b)
+       - Adiciona mask_lab à lista
+    
+    3. MÁSCARA R/G CHROMATICITY (se enable_rg):
+       - Chama rg_chromaticity_mask(bgr, rg_thresholds)
+       - Adiciona à lista
+    
+    4. MÁSCARA BACKPROJECTION (se enable_backproj e hist disponível):
+       - Chama mask_from_backproj(hsv, hist, thresh)
+       - Adiciona à lista
+    
+    5. COMBINAÇÃO:
+       - combined = masks[0]
+       - Para cada máscara adicional: combined = OR(combined, máscara)
+    
+    6. MORFOLOGIA:
+       - Aplica morphologyEx(MORPH_OPEN) com k_open, open_iterations
+       - Aplica morphologyEx(MORPH_CLOSE) com k_close, close_iterations
+    
+    7. Retorna máscara combinada e limpa
+
+Método: _part_boxes(self, mask: np.ndarray) -> List[Tuple[int, int, int, int]]
+  - Descrição: Encontra bounding boxes de partes individuais na máscara
+  - Parâmetros:
+    * mask: Máscara binária (uint8)
+  - Retorno: Lista de bounding boxes (x, y, w, h) ordenados por y crescente
+  - Fluxo interno:
+    1. Encontra contornos via findContours(RETR_EXTERNAL, CHAIN_APPROX_SIMPLE)
+    2. Para cada contorno:
+       - Calcula área via contourArea()
+       - Se área < min_part_area: descarta
+       - Senão: adiciona boundingRect() à lista
+    3. Ordena boxes por coordenada y (top to bottom)
+    4. Retorna lista ordenada
+
+Método: _build_groups(self, boxes: List[Tuple[int, int, int, int]]) -> List[List[int]]
+  - Descrição: Agrupa partes verticalmente alinhadas usando grafo de conectividade
+  - Parâmetros:
+    * boxes: Lista de bounding boxes de partes
+  - Retorno: Lista de grupos (cada grupo é lista de índices de boxes)
+  - Fluxo interno (ALGORITMO DE CONECTIVIDADE):
+    1. Inicializa lista de adjacência adj[n] (n = número de boxes)
+    2. Para cada par de boxes (i, j) onde j > i:
+       a. Calcula centros horizontais acx, bcx
+       b. Calcula gap vertical: gap = by - (ay + ah)
+       c. Se gap > max_y_gap: continua (muito distante verticalmente)
+       d. Calcula sobreposição horizontal: ov = x_overlap_ratio(box_i, box_j)
+       e. Verifica se centros estão próximos: |acx - bcx| <= max_x_center_diff
+       f. Se ov >= min_x_overlap_ratio OU centros próximos:
+          - Adiciona j a adj[i] e i a adj[j] (conexão bidirecional)
+    3. Executa DFS (busca em profundidade) para encontrar componentes conectados:
+       a. visited[n] = [False, ...]
+       b. Para cada nó i não visitado:
+          - Inicia DFS com pilha [i]
+          - Marca visitado e expande vizinhos
+          - Coleta todos nós alcançáveis em comp[]
+          - Adiciona comp a groups[]
+    4. Retorna lista de grupos
+  - Parâmetros usados:
+    + grouping.max_y_gap: Gap vertical máximo entre partes (pixels)
+    + grouping.min_x_overlap_ratio: Sobreposição horizontal mínima (0-1)
+    + grouping.max_x_center_diff: Diferença máxima entre centros (pixels)
+
+Método: _pad_bbox(self, bbox: Tuple[int, int, int, int], frame_w: int, frame_h: int) -> Tuple[int, int, int, int]
+  - Descrição: Adiciona padding ao bounding box com clipping
+  - Parâmetros:
+    * bbox: Bounding box original (x, y, w, h)
+    * frame_w, frame_h: Dimensões do frame para clipping
+  - Retorno: Bounding box expandido (x, y, w, h)
+  - Comportamento:
+    * x1 = clamp(x - pad_x, 0, frame_w-1)
+    * y1 = clamp(y - pad_y, 0, frame_h-1)
+    * x2 = clamp(x + w + pad_x, 0, frame_w)
+    * y2 = clamp(y + h + pad_y, 0, frame_h)
+    * Retorna (x1, y1, x2-x1, y2-y1)
+
+Método: _profile_score(self, mask: np.ndarray, bbox: Tuple[int, int, int, int]) -> float
+  - Descrição: Calcula score de perfil baseado na forma cônica (base larga, topo estreito)
+  - Parâmetros:
+    * mask: Máscara binária completa
+    * bbox: Bounding box para analisar
+  - Retorno: Score entre 0.0 e 1.0 (maior = mais cônico)
+  - Algoritmo detalhado:
+    1. Extrai ROI segura da máscara
+    2. Divide ROI em N slices horizontais (N = profile_slices, default 10)
+    3. Para cada slice:
+       a. Calcula quais colunas têm pelo menos 1 pixel branco (occupied width)
+       b. Normaliza pelo width total: width_ratio = occupied_cols / total_cols
+       c. Armazena width_ratio (valor entre 0 e 1)
+    4. Filtra slices muito pequenos (width < 0.03)
+    5. Se menos de 4 slices válidos: retorna 0.0
+    6. Calcula MONOTONICITY SCORE:
+       - Percorre slices consecutivos
+       - Se slice[i+1] >= slice[i] * 0.85: adiciona 1.0
+       - Se slice[i+1] >= slice[i] * 0.70: adiciona 0.5
+       - mono_score = soma / (n_slices - 1)
+    7. Calcula TOP vs BOTTOM score:
+       - top_third = média do primeiro terço dos slices
+       - bot_third = média do último terço dos slices
+       - ratio = bot_third / top_third (maior = mais largo embaixo)
+       - base_score = clamp((ratio - 1.0) / 1.2, 0, 1)
+    8. Combina scores: score = 0.55 * mono_score + 0.45 * base_score
+    9. Retorna score final
+  - Heurística: Cones têm base larga e topo estreito, com largura crescente
+    monotonicamente de cima para baixo. O score penaliza formas irregulares.
+
+Método: detect(self, frame: np.ndarray) -> Tuple[List[Tuple[Tuple[int, int, int, int], float, dict]], np.ndarray, List[Tuple[Tuple[int, int, int, int], str]]]
+  - Descrição: Detecta cones no frame completo
+  - Parâmetros:
+    * frame: Imagem BGR (numpy array HxWx3, uint8)
+  - Retorno: Tupla (results, mask, rejects) onde:
+    * results: Lista de detecções aceitas (bbox, score, data_dict)
+    * mask: Máscara binária final
+    * rejects: Lista de candidatos rejeitados (bbox, reason_string)
+  - Fluxo completo (PIPELINE DE DETECÇÃO):
+    
+    FASE 1 - PRÉ-PROCESSAMENTO:
+      1. hsv = self.preprocess(frame)
+      2. mask = self.get_mask(frame, hsv)
+    
+    FASE 2 - EXTRAÇÃO DE PARTES:
+      3. boxes = self._part_boxes(mask)
+      4. groups_idx = self._build_groups(boxes)
+    
+    FASE 3 - VALIDAÇÃO E SCORING:
+      Para cada grupo de partes conectadas:
+        3.1. Union bounding box:
+          - ub = bbox_union([boxes[i] for i in group])
+          - group_bbox = _pad_bbox(ub, frame_w, frame_h)
+        
+        3.2. Validação de ÁREA:
+          - area = w * h
+          - Se area < min_group_area OU area > max_group_area:
+            + Rejeita com motivo "area=X"
+            + Continua próximo grupo
+        
+        3.3. Validação de ASPECT RATIO:
+          - aspect = h / w
+          - Se aspect < aspect_min OU aspect > aspect_max:
+            + Rejeita com motivo "aspect=X"
+            + Continua
+        
+        3.4. Validação de FILL RATIO:
+          - roi = extrai ROI da máscara
+          - fill = countNonZero(roi) / area
+          - Se fill < min_fill_ratio OU fill > max_fill_ratio:
+            + Rejeita com motivo "fill=X"
+            + Continua
+        
+        3.5. Cálculo de SCORES:
+          - p = _profile_score(mask, group_bbox)
+          - aspect_score = 1.0 - |aspect - 2.0| / 2.5
+          - aspect_score = clamp(aspect_score, 0, 1)
+          - score = (p * weight_profile) + (fill * weight_fill) + (aspect_score * weight_aspect)
+        
+        3.6. Validação de SCORE FINAL:
+          - Se score < min_frame_score:
+            + Rejeita com motivo "score=X"
+            + Continua
+        
+        3.7. ACEITA DETECÇÃO:
+          - Cria data dict: {profile, fill, aspect, aspect_score, score, parts}
+          - Adiciona (group_bbox, score, data) a results
+    
+    FASE 4 - ORDENAÇÃO E RETORNO:
+      4. Ordena results por score (maior primeiro)
+      5. Retorna (results, mask, rejects)
+
+FLUXO INTERNO (PSEUDOCÓDIGO COMPLETO):
+```
+função detect(frame):
+  // Pré-processamento
+  hsv = preprocessar(frame)  // blur + CLAHE + conversão
+  mask = combinar_mascaras(frame, hsv)  // HSV + Lab + RG + backproj
+  
+  // Extração de partes
+  boxes = encontrar_contornos(mask)
+  filtrar_por_area_minima(boxes)
+  ordenar_por_y(boxes)
+  
+  // Agrupamento
+  grupos = construir_grafo_conectividade(boxes)
+  executar_DFS_para_componentes_conectados(grupos)
+  
+  // Validação e scoring
+  results = []
+  rejects = []
+  
+  para cada grupo em grupos:
+    bbox = unir_boxes_do_grupo(grupo)
+    bbox = adicionar_padding(bbox)
+    area = bbox.w * bbox.h
+    
+    // Filtro 1: Área
+    se area < min OU area > max:
+      rejects.adicionar(bbox, "area=X")
+      continuar
+    
+    // Filtro 2: Aspect ratio
+    aspect = bbox.h / bbox.w
+    se aspect < min OU aspect > max:
+      rejects.adicionar(bbox, "aspect=X")
+      continuar
+    
+    // Filtro 3: Fill ratio
+    roi = extrair_roi(mask, bbox)
+    fill = contar_pixels_brancos(roi) / area
+    se fill < min OU fill > max:
+      rejects.adicionar(bbox, "fill=X")
+      continuar
+    
+    // Calcular scores
+    profile = calcular_profile_score(mask, bbox)
+    aspect_score = 1.0 - |aspect - 2.0| / 2.5
+    score = profile*w1 + fill*w2 + aspect_score*w3
+    
+    // Filtro 4: Score final
+    se score < threshold:
+      rejects.adicionar(bbox, "score=X")
+      continuar
+    
+    // Aceitar
+    data = {profile, fill, aspect, aspect_score, score, parts}
+    results.adicionar(bbox, score, data)
+  
+  ordenar_por_score_decrescente(results)
+  retornar results, mask, rejects
+```
+
+CONEXÕES COM OUTROS COMPONENTES:
+- IMPORTA: color_utils.gray_world, load_backproj_hist, mask_from_backproj, rg_chromaticity_mask
+- IMPORTA: utils.bbox_union, clamp, safe_roi, x_overlap_ratio
+- USADO POR: app.App (self.detector.detect())
+- EXPORTADO VIA: cone_tracker/__init__.py
+
+PARÂMETROS CONFIGURÁVEIS:
+- hsv_orange.low_1, high_1: Primeiro range HSV para laranja ([H,S,V])
+- hsv_orange.low_2, high_2: Segundo range HSV (wraparound em Hue)
+- morphology.kernel_open: Tamanho do kernel de abertura (int, default 3)
+- morphology.kernel_close: Tamanho do kernel de fechamento (int, default 7)
+- morphology.open_iterations: Iterações de abertura (int, default 1)
+- morphology.close_iterations: Iterações de fechamento (int, default 1)
+- clahe.clip_limit: Limite de recorte CLAHE (float, default 1.8)
+- clahe.tile_grid_size: Grade de tiles CLAHE ([int, int], default [8, 8])
+- grouping.min_part_area: Área mínima de parte (int, default 80 pixels)
+- grouping.max_y_gap: Gap vertical máximo (int, default 80 pixels)
+- grouping.min_x_overlap_ratio: Sobreposição horizontal mínima (float, default 0.20)
+- grouping.max_x_center_diff: Diferença máxima de centros (int, default 80 pixels)
+- grouping.pad_x: Padding horizontal (int, default 8 pixels)
+- grouping.pad_y: Padding vertical (int, default 12 pixels)
+- geometry.min_group_area: Área mínima de grupo (int, default 1400 pixels)
+- geometry.max_group_area: Área máxima de grupo (int, default 450000 pixels)
+- geometry.aspect_min: Aspect ratio mínimo (float, default 1.0)
+- geometry.aspect_max: Aspect ratio máximo (float, default 6.0)
+- geometry.profile_slices: Número de slices para profile score (int, default 10)
+- geometry.min_fill_ratio: Fill ratio mínimo (float, default 0.08)
+- geometry.max_fill_ratio: Fill ratio máximo (float, default 0.65)
+- geometry.min_frame_score: Score mínimo para aceitação (float, default 0.35)
+- weights.profile: Peso do profile score (float, default 0.50)
+- weights.fill: Peso do fill ratio (float, default 0.35)
+- weights.aspect: Peso do aspect score (float, default 0.15)
+- color.*: Múltiplas opções de cor (ver seção color_utils)
+- debug.show_rejection_reason: Incluir rejects no retorno (bool)
+
+DEPENDÊNCIAS EXTERNAS:
+- cv2: findContours, boundingRect, contourArea, inRange, morphologyEx, etc.
+- numpy: Arrays, operações matemáticas
+
+DEPENDÊNCIAS INTERNAS:
+- cone_tracker.color_utils
+- cone_tracker.utils
+
+PONTOS DE ATENÇÃO:
+1. MÚLTIPLAS MÁSCARAS: A combinação via OR permite maior robustez, mas pode
+   gerar falsos positivos. Ajustar thresholds individualmente.
+2. PROFILE SCORE: Heurística sensível ao número de slices. Com menos de 4 slices
+   válidos, retorna 0.0. Aumentar profile_slices para objetos grandes.
+3. ASPECT RATIO TARGET: O código assume aspect ratio ideal de 2.0 (altura = 2x largura).
+   Ajustar se cones tiverem proporções diferentes.
+4. PADDING: Adiciona pixels extras ao bbox para capturar bordas. Pode causar
+   sobreposição de detecções próximas.
+5. ORDENAÇÃO POR SCORE: Results são ordenados por score decrescente. O tracker
+   associa em ordem, priorizando detecções de maior confiança.
+
+LIMITAÇÕES:
+- Não suporta detecção de cones parcialmente ocluídos (algoritmo de partes
+  conectadas falha em oclusões severas)
+- Assume cones em pé (vertical). Cones deitados ou inclinados não são detectados.
+- Sensível a condições de iluminação (mesmo com CLAHE e gray-world)
+- Não usa aprendizado de máquina (CNN), depende de regras handcrafted
+- Profile score assume crescimento monotônico de largura, o que pode falhar
+  para cones com listras ou reflexos
+
+RECOMENDAÇÕES TÉCNICAS:
+1. CALIBRAÇÃO DE COR: Executar em vídeos de teste e ajustar ranges HSV/Lab
+   para diferentes condições de iluminação.
+2. BACKPROJECTION: Para maior robustez, gerar histograma de cones conhecidos
+   e habilitar color.enable_backproj.
+3. TUNING DE GEOMETRIA: Coletar estatísticas de detecções corretas (área,
+   aspect, fill) e ajustar ranges geometry.*.
+4. PROFILE SLICES: Aumentar para 15-20 se cones forem grandes na imagem (perto).
+5. FALSOS POSITIVOS: Se muitos, aumentar min_frame_score ou confirm_avg_score.
+6. FALSOS NEGATIVOS: Se muitos, diminuir thresholds ou habilitar máscaras adicionais.
+7. PERFORMANCE: Desabilitar máscaras não essenciais (Lab, RG, backproj) se CPU limitada.
+8. VALIDAÇÃO: Usar debug.show_rejection_reason para entender quais filtros
+   estão rejeitando detecções verdadeiras.
+
+
+--------------------------------------------------------------------------------
+3. MÓDULO: cone_tracker/tracker.py
+--------------------------------------------------------------------------------
+
+CAMINHO RELATIVO: cone_tracker/tracker.py
+
+DESCRIÇÃO DETALHADA:
+Implementa sistema de tracking multi-objeto para rastreamento de múltiplos cones
+simultaneamente. Usa algoritmo de associação greedy baseado em distância euclidiana
+entre centros de bounding boxes, com suavização via média móvel exponencial (EMA)
+e gerenciamento de estados (SUSPECT → CONFIRMED → DELETED).
+
+RESPONSABILIDADES:
+- Manter histórico de tracks (objetos rastreados)
+- Associar detecções novas a tracks existentes
+- Criar novos tracks para detecções não associadas
+- Atualizar posição e score de tracks via EMA
+- Gerenciar estados do ciclo de vida (SUSPECT, CONFIRMED, LOST)
+- Deletar tracks antigos ou perdidos
+- Implementar grace period para tracks confirmados
+
+CLASSES E MÉTODOS PRINCIPAIS:
+
+Dataclass: Track
+----------------
+Assinatura: Track(track_id: int)
+
+Atributos:
+  - track_id: int - Identificador único do track
+  - cx, cy: float - Centro do bounding box (x, y)
+  - w, h: float - Largura e altura do bounding box
+  - state: ConeState - Estado atual (SUSPECT, CONFIRMED, LOST)
+  - created_at: float - Timestamp de criação (time.time())
+  - last_seen: float - Timestamp da última detecção associada
+  - last_good_time: float - Timestamp da última vez em estado CONFIRMED
+  - score_hist: deque - Histórico de scores (maxlen configurável)
+  - miss_counter: int - Contador de frames consecutivos sem associação
+
+Método: bbox(self) -> Tuple[int, int, int, int]
+  - Descrição: Retorna bounding box como tupla (x, y, w, h)
+  - Retorno: (int(cx - w/2), int(cy - h/2), int(w), int(h))
+
+Propriedade: frames_seen(self) -> int
+  - Descrição: Número de frames em que o track foi visto (tamanho do histórico)
+  - Retorno: len(score_hist)
+
+Método: avg_score(self) -> float
+  - Descrição: Calcula score médio do histórico
+  - Retorno: mean(score_hist) ou 0.0 se vazio
+
+Método: update(self, bbox: Tuple[int, int, int, int], score: float, alpha: float, score_window: int)
+  - Descrição: Atualiza track com nova detecção
+  - Parâmetros:
+    * bbox: Bounding box da detecção (x, y, w, h)
+    * score: Score da detecção
+    * alpha: Fator de suavização EMA (0-1, maior = mais reativo)
+    * score_window: Tamanho máximo do histórico
+  - Comportamento:
+    1. Ajusta maxlen do score_hist se mudou
+    2. Calcula centro da nova detecção (cx_new, cy_new)
+    3. Se primeira atualização (w <= 0): inicializa diretamente
+    4. Senão: aplica EMA:
+       - cx = alpha * cx_new + (1-alpha) * cx_old
+       - cy = alpha * cy_new + (1-alpha) * cy_old
+       - w = alpha * w_new + (1-alpha) * w_old
+       - h = alpha * h_new + (1-alpha) * h_old
+    5. Adiciona score ao histórico
+    6. Atualiza timestamps (last_seen, last_good_time)
+    7. Reseta miss_counter = 0
+
+Classe: MultiConeTracker
+-------------------------
+Assinatura: MultiConeTracker(config: Dict[str, Any])
+
+Método: __init__(self, config: Dict[str, Any])
+  - Descrição: Inicializa tracker com configuração
+  - Parâmetros:
+    * config: Dicionário de configuração completo
+  - Comportamento:
+    * Extrai seções tracking e geometry da config
+    * Inicializa tracks = [] (lista vazia de tracks)
+    * Inicializa next_id = 0 (contador de IDs)
+
+Método: _make_track(self, det_bbox: Tuple[int, int, int, int], det_score: float) -> Track
+  - Descrição: Cria novo track a partir de uma detecção
+  - Parâmetros:
+    * det_bbox: Bounding box da detecção
+    * det_score: Score da detecção
+  - Retorno: Novo objeto Track inicializado
+  - Comportamento:
+    1. Cria Track com track_id = next_id
+    2. Incrementa next_id
+    3. Inicializa score_hist com maxlen = score_window
+    4. Chama track.update() com a detecção
+    5. Retorna track
+
+Método: _associate_greedy(self, detections: List[Tuple[Tuple[int, int, int, int], float, dict]]) -> Tuple[Dict[int, int], List[int], List[int]]
+  - Descrição: Associa tracks a detecções usando algoritmo greedy baseado em distância
+  - Parâmetros:
+    * detections: Lista de detecções (bbox, score, data)
+  - Retorno: Tupla (matches, unmatched_tracks, unmatched_detections) onde:
+    * matches: Dict {track_index: detection_index}
+    * unmatched_tracks: Lista de índices de tracks não associados
+    * unmatched_detections: Lista de índices de detecções não associadas
+  
+  - Algoritmo detalhado (GREEDY ASSOCIATION):
+    PASSO 1: Casos especiais
+      - Se tracks vazio: retorna ({}, [], [0,1,2,...,len(detections)-1])
+      - Se detections vazio: retorna ({}, [0,1,2,...,len(tracks)-1], [])
+    
+    PASSO 2: Calcular todas as distâncias válidas
+      - max_dist = association_max_distance (da config)
+      - pairs = []
+      - Para cada track t em tracks:
+        + tb = t.bbox()
+        + Para cada detection d em detections:
+          * db = d[0] (bbox)
+          * dist = bbox_distance(tb, db)  // distância euclidiana entre centros
+          * Se dist <= max_dist:
+            - Adiciona (dist, track_index, detection_index) a pairs
+    
+    PASSO 3: Ordenar pares por distância crescente
+      - pairs.sort(key=lambda x: x[0])  // menor distância primeiro
+    
+    PASSO 4: Associação greedy
+      - matched_tracks = set()
+      - matched_dets = set()
+      - matches = {}
+      - Para cada (dist, ti, di) em pairs:
+        + Se ti já está em matched_tracks OU di já está em matched_dets:
+          * Continua (já associado)
+        + Senão:
+          * matches[ti] = di
+          * Adiciona ti a matched_tracks
+          * Adiciona di a matched_dets
+    
+    PASSO 5: Coletar não associados
+      - unmatched_tracks = [i for i em range(len(tracks)) if i não em matched_tracks]
+      - unmatched_detections = [i for i em range(len(detections)) if i não em matched_dets]
+    
+    PASSO 6: Retornar resultados
+      - return (matches, unmatched_tracks, unmatched_detections)
+
+Método: update(self, detections: List[Tuple[Tuple[int, int, int, int], float, dict]])
+  - Descrição: Atualiza tracker com novas detecções do frame atual
+  - Parâmetros:
+    * detections: Lista de detecções do detector (bbox, score, data)
+  - Retorno: None (modifica self.tracks in-place)
+  
+  - Fluxo completo (PIPELINE DE TRACKING):
+    
+    FASE 1 - EXPIRAÇÃO DE TRACKS ANTIGOS:
+      - now = time.time()
+      - alive = []
+      - Para cada track t em self.tracks:
+        + timeout = now - t.last_seen
+        + Se timeout <= lost_timeout:
+          * Adiciona t a alive
+        + Senão:
+          * Registra log: "🗑️ Track {id} DELETADO: frames={n}, avg={score}, idade={age}s"
+      - self.tracks = alive
+    
+    FASE 2 - ASSOCIAÇÃO:
+      - matches, unmatched_tracks, unmatched_dets = self._associate_greedy(detections)
+    
+    FASE 3 - ATUALIZAR TRACKS ASSOCIADOS:
+      - Para cada (ti, di) em matches.items():
+        + bbox, score, _data = detections[di]
+        + self.tracks[ti].update(bbox, score, alpha=ema_alpha, score_window=score_window)
+    
+    FASE 4 - GRACE PERIOD PARA TRACKS NÃO ASSOCIADOS:
+      - Para cada ti em unmatched_tracks:
+        + t = self.tracks[ti]
+        + Se t.state == CONFIRMED:
+          * t.miss_counter += 1
+          * Se grace_seconds > 0.0:  // modo baseado em tempo
+            - Se (now - t.last_good_time) > grace_seconds:
+              + t.state = SUSPECT
+              + t.score_hist.clear()
+              + t.miss_counter = 0
+          * Senão:  // modo baseado em frames
+            - grace_frames = config grace_frames
+            - Se t.miss_counter > grace_frames:
+              + t.state = SUSPECT
+              + t.score_hist.clear()
+              + t.miss_counter = 0
+    
+    FASE 5 - CRIAR NOVOS TRACKS:
+      - Para cada di em unmatched_dets:
+        + Se len(self.tracks) >= max_tracks:
+          * break (limite de tracks atingido)
+        + bbox, score, _data = detections[di]
+        + novo_track = self._make_track(bbox, score)
+        + self.tracks.append(novo_track)
+    
+    FASE 6 - CONFIRMAR TRACKS:
+      - Para cada t em self.tracks:
+        + frames = len(t.score_hist)
+        + avg = t.avg_score()
+        + min_frames = min_frames_for_confirm (da config)
+        + threshold = confirm_avg_score (da config geometry)
+        + Se frames >= min_frames E avg >= threshold:
+          * Se t.state != CONFIRMED:
+            - Registra log: "✅ Track {id} CONFIRMADO! frames={n}, avg={score}"
+          * t.state = CONFIRMED
+        + Senão:
+          * Se t.state != CONFIRMED:
+            - t.state = SUSPECT
+
+Método: confirmed_tracks(self) -> List[Track]
+  - Descrição: Retorna lista de tracks confirmados
+  - Retorno: [t for t em self.tracks if t.state == CONFIRMED]
+  - Nota: Não filtra por idade mínima (min_confirmed_age_frames não implementado)
+
+FLUXO INTERNO (PSEUDOCÓDIGO):
+```
+função update(detections):
+  // 1. Expirar tracks antigos
+  agora = tempo_atual()
+  tracks_vivos = []
+  para cada track em self.tracks:
+    se (agora - track.last_seen) <= timeout:
+      tracks_vivos.adicionar(track)
+    senão:
+      logar_deletado(track)
+  self.tracks = tracks_vivos
+  
+  // 2. Associar tracks->detections
+  matches, unmatched_t, unmatched_d = associar_greedy(detections)
+  
+  // 3. Atualizar tracks associados
+  para cada (indice_track, indice_detection) em matches:
+    bbox, score = detections[indice_detection]
+    tracks[indice_track].atualizar(bbox, score, alpha, window)
+  
+  // 4. Grace period para tracks não associados
+  para cada indice_track em unmatched_t:
+    track = tracks[indice_track]
+    se track.state == CONFIRMED:
+      track.miss_counter += 1
+      se ultrapassou_grace_period(track):
+        track.state = SUSPECT
+        track.score_hist.limpar()
+        track.miss_counter = 0
+  
+  // 5. Criar novos tracks
+  para cada indice_detection em unmatched_d:
+    se numero_de_tracks < max_tracks:
+      bbox, score = detections[indice_detection]
+      novo_track = criar_track(bbox, score, proximo_id)
+      tracks.adicionar(novo_track)
+      proximo_id += 1
+  
+  // 6. Decidir confirmação
+  para cada track em tracks:
+    frames_vistos = tamanho_do_historico(track)
+    score_medio = calcular_media(track.score_hist)
+    
+    se frames_vistos >= min_frames E score_medio >= threshold:
+      se track.state != CONFIRMED:
+        logar_confirmado(track)
+      track.state = CONFIRMED
+    senão:
+      se track.state != CONFIRMED:
+        track.state = SUSPECT
+```
+
+CONEXÕES COM OUTROS COMPONENTES:
+- IMPORTA: utils.ConeState, utils.bbox_distance
+- USADO POR: app.App (self.tracker.update(), self.tracker.confirmed_tracks())
+- EXPORTADO VIA: cone_tracker/__init__.py
+
+PARÂMETROS CONFIGURÁVEIS:
+- tracking.max_tracks: Máximo de tracks simultâneos (int, default 8)
+- tracking.association_max_distance: Distância máxima para associação (int, default 140 pixels)
+- tracking.ema_alpha: Fator de suavização EMA (float, 0-1, default 0.25)
+- tracking.lost_timeout: Timeout em segundos para deletar track (float, default 0.6s)
+- tracking.score_window: Tamanho do histórico de scores (int, default 10)
+- tracking.min_frames_for_confirm: Frames mínimos para confirmar (int, default 6)
+- tracking.grace_frames: Frames de grace period (int, default 12)
+- tracking.grace_seconds: Grace period em segundos (float, default 0.0, desabilitado)
+- tracking.min_confirmed_age_frames: Idade mínima para exibir (int, não implementado)
+- geometry.confirm_avg_score: Score médio mínimo para confirmação (float, default 0.55)
+
+DEPENDÊNCIAS EXTERNAS:
+- time: Timestamps
+- collections.deque: Histórico de scores
+- dataclasses: Decorator @dataclass para Track
+- numpy: Cálculo de média
+
+DEPENDÊNCIAS INTERNAS:
+- cone_tracker.utils
+
+PONTOS DE ATENÇÃO:
+1. ALGORITMO GREEDY: A associação é greedy (primeira opção disponível). Não
+   considera combinações ótimas globais. Para cenários complexos (muitos cones
+   próximos), considerar Hungarian algorithm.
+2. LOST_TIMEOUT CRÍTICO: Valor muito baixo (ex: 0.6s) causa deleção prematura
+   de tracks, impedindo confirmação. Recomenda-se 3.0s ou mais.
+3. GRACE PERIOD DUPLO: Suporta grace_seconds (tempo real) ou grace_frames (frames).
+   Se grace_seconds > 0, usa tempo; senão usa frames. Preferir grace_seconds
+   para robustez independente de FPS.
+4. RESET DE HISTÓRICO: Quando track CONFIRMED volta a SUSPECT, o score_hist
+   é limpo. Isso força reacumulação de evidências.
+5. NEXT_ID CRESCENTE: IDs nunca são reutilizados. Em execuções longas, IDs
+   podem ficar muito grandes (não é problema prático).
+6. SUAVIZAÇÃO EMA: Alpha=0.25 significa 25% de peso para nova detecção, 75%
+   para valor anterior. Aumentar alpha para rastreamento mais reativo.
+
+LIMITAÇÕES:
+- Não suporta predição de movimento (Kalman filter, etc.)
+- Associação greedy não é ótima para cenários complexos
+- Não trata oclusões explicitamente
+- Não persiste tracks entre execuções (reinicialização perde histórico)
+- min_confirmed_age_frames declarado na config mas não implementado no código
+- Não suporta merge de tracks (mesmo cone detectado como 2 tracks separados)
+- Não suporta split de tracks (oclusão temporária cria novo track)
+
+RECOMENDAÇÕES TÉCNICAS:
+1. TUNING DE TIMEOUT: Configurar lost_timeout >= 3.0s para permitir confirmação
+   mesmo com detecções intermitentes.
+2. ASSOCIATION DISTANCE: Aumentar association_max_distance (250-300) para cones
+   em movimento rápido ou câmera em movimento.
+3. CONFIRMAÇÃO RÁPIDA: Diminuir min_frames_for_confirm (4 frames) e
+   confirm_avg_score (0.50) para confirmação mais rápida, aceitando mais falsos
+   positivos.
+4. EMA ALPHA: Aumentar para 0.35-0.40 se cones se moverem rapidamente.
+   Diminuir para 0.15-0.20 para suavização mais agressiva.
+5. MAX TRACKS: Ajustar conforme cenário. 8 é adequado para pistas com poucos cones.
+   Aumentar para 15-20 em ambientes densos.
+6. GRACE PERIOD: Usar grace_seconds em vez de grace_frames para robustez
+   independente de FPS variável.
+7. LOG DE DEBUG: Habilitar tracking logs para diagnosticar problemas de
+   associação e confirmação.
+8. IMPLEMENTAR PREDIÇÃO: Para robustez em oclusões, implementar Kalman filter
+   ou modelo de velocidade constante para predizer posições.
+9. HUNGARIAN ALGORITHM: Para associação ótima em cenários com muitos cones
+   próximos, substituir greedy por Hungarian (scipy.optimize.linear_sum_assignment).
+
+
+--------------------------------------------------------------------------------
+4. MÓDULO: cone_tracker/utils.py
+--------------------------------------------------------------------------------
+
+CAMINHO RELATIVO: cone_tracker/utils.py
+
+DESCRIÇÃO DETALHADA:
+Módulo de funções utilitárias gerais para operações com bounding boxes,
+extração de ROIs e definição de tipos/estados. Fornece primitivas reutilizáveis
+para detector e tracker.
+
+RESPONSABILIDADES:
+- Definir enum de estados de tracking (ConeState)
+- Operações matemáticas básicas (clamp)
+- Operações com bounding boxes (união, centro, distância, sobreposição)
+- Extração segura de ROIs com clipping
+
+ENUMERAÇÕES:
+
+Enum: ConeState
+---------------
+Descrição: Estados do ciclo de vida de um track
+Valores:
+  - SUSPECT: Track recém-criado ou com baixa confiança (não confirmado)
+  - CONFIRMED: Track confirmado (frames suficientes + score alto)
+  - LOST: Track perdido (não usado atualmente, tracks são deletados em vez disso)
+
+FUNÇÕES PRINCIPAIS:
+
+Função: clamp(v: float, lo: float, hi: float) -> float
+  - Descrição: Limita valor v entre lo e hi
+  - Parâmetros:
+    * v: Valor a limitar
+    * lo: Limite inferior
+    * hi: Limite superior
+  - Retorno: max(lo, min(hi, v))
+  - Exemplo: clamp(150, 0, 100) = 100, clamp(-5, 0, 100) = 0
+
+Função: safe_roi(img: np.ndarray, bbox: Tuple[int, int, int, int]) -> Tuple[np.ndarray, Tuple[int, int, int, int]]
+  - Descrição: Extrai ROI de imagem com clipping seguro
+  - Parâmetros:
+    * img: Imagem numpy (HxW ou HxWxC)
+    * bbox: Bounding box (x, y, w, h)
+  - Retorno: Tupla (roi, bbox_clipped) onde:
+    * roi: Região extraída (subarray da imagem)
+    * bbox_clipped: Bbox após clipping (x, y, w, h)
+  - Comportamento:
+    1. Obtém dimensões da imagem (h, w)
+    2. Clippa coordenadas do bbox para estar dentro da imagem:
+       - x = clamp(x, 0, w-1)
+       - y = clamp(y, 0, h-1)
+       - x2 = clamp(x+bw, 0, w)
+       - y2 = clamp(y+bh, 0, h)
+    3. Se bbox inválido (x2 <= x ou y2 <= y): retorna ROI vazio e bbox (0,0,0,0)
+    4. Extrai roi = img[y:y2, x:x2]
+    5. Retorna (roi, (x, y, x2-x, y2-y))
+  - Uso: Evita erros de indexação ao extrair regiões próximas às bordas
+
+Função: x_overlap_ratio(a: Tuple[int, int, int, int], b: Tuple[int, int, int, int]) -> float
+  - Descrição: Calcula razão de sobreposição horizontal entre dois bboxes
+  - Parâmetros:
+    * a, b: Bounding boxes (x, y, w, h)
+  - Retorno: Sobreposição normalizada (0.0 a 1.0)
+  - Algoritmo:
+    1. Extrai a1 = ax, a2 = ax + aw (limites horizontais de a)
+    2. Extrai b1 = bx, b2 = bx + bw (limites horizontais de b)
+    3. Calcula interseção: inter = max(0, min(a2, b2) - max(a1, b1))
+    4. Normaliza pelo menor width: ratio = inter / min(aw, bw)
+    5. Retorna ratio (0.0 = sem sobreposição, 1.0 = total)
+  - Uso: Agrupar partes verticalmente alinhadas no detector
+
+Função: bbox_union(boxes: List[Tuple[int, int, int, int]]) -> Optional[Tuple[int, int, int, int]]
+  - Descrição: Calcula bounding box união de múltiplos boxes
+  - Parâmetros:
+    * boxes: Lista de bounding boxes [(x, y, w, h), ...]
+  - Retorno: Bbox união (x_min, y_min, w, h) ou None se lista vazia
+  - Algoritmo:
+    1. Se boxes vazio: retorna None
+    2. Calcula x_min = min de todos x
+    3. Calcula y_min = min de todos y
+    4. Calcula x_max = max de todos (x + w)
+    5. Calcula y_max = max de todos (y + h)
+    6. w = x_max - x_min
+    7. h = y_max - y_min
+    8. Retorna (x_min, y_min, w, h)
+  - Uso: Agrupar múltiplas partes em um único bbox no detector
+
+Função: bbox_center(b: Tuple[int, int, int, int]) -> Tuple[float, float]
+  - Descrição: Calcula centro de um bounding box
+  - Parâmetros:
+    * b: Bounding box (x, y, w, h)
+  - Retorno: (center_x, center_y) em float
+  - Algoritmo: (x + w/2, y + h/2)
+
+Função: bbox_distance(a: Tuple[int, int, int, int], b: Tuple[int, int, int, int]) -> float
+  - Descrição: Calcula distância euclidiana entre centros de dois bboxes
+  - Parâmetros:
+    * a, b: Bounding boxes (x, y, w, h)
+  - Retorno: Distância em pixels (float)
+  - Algoritmo:
+    1. (ax, ay) = bbox_center(a)
+    2. (bx, by) = bbox_center(b)
+    3. dist = sqrt((ax - bx)² + (ay - by)²)
+    4. Retorna dist
+  - Uso: Associação de tracks no tracker (menor distância = melhor match)
+
+CONEXÕES COM OUTROS COMPONENTES:
+- USADO POR: cone_tracker.detector (safe_roi, bbox_union, x_overlap_ratio, clamp)
+- USADO POR: cone_tracker.tracker (bbox_distance, ConeState)
+- USADO POR: cone_tracker.visualizer (ConeState)
+- EXPORTADO VIA: cone_tracker/__init__.py (ConeState)
+
+DEPENDÊNCIAS EXTERNAS:
+- numpy: Para cálculo de hipot (distância euclidiana)
+- enum: Para definição de ConeState
+
+PONTOS DE ATENÇÃO:
+1. safe_roi retorna bbox CLIPPED (pode ser diferente do bbox input)
+2. x_overlap_ratio normaliza pelo MENOR width (não pela união)
+3. bbox_distance usa centros (não considera tamanho dos boxes)
+4. ConeState.LOST não é usado no código atual (tracks são deletados diretamente)
+
+LIMITAÇÕES:
+- Não suporta bboxes rotacionados (apenas axis-aligned)
+- bbox_distance não considera tamanho/forma dos boxes (apenas centros)
+- Não implementa IoU (Intersection over Union), que seria mais robusto
+
+RECOMENDAÇÕES TÉCNICAS:
+1. Para melhor associação, considerar implementar IoU além de distância de centros
+2. Se precisar de bboxes rotacionados, migrar para cv2.RotatedRect
+3. Documentar claramente que x_overlap_ratio normaliza pelo menor width
+
+
+--------------------------------------------------------------------------------
+5. MÓDULO: cone_tracker/color_utils.py
+--------------------------------------------------------------------------------
+
+CAMINHO RELATIVO: cone_tracker/color_utils.py
+
+DESCRIÇÃO DETALHADA:
+Utilitários para processamento de cor e criação de máscaras alternativas de
+segmentação. Fornece técnicas complementares ao threshold HSV básico para
+maior robustez em diferentes condições de iluminação.
+
+RESPONSABILIDADES:
+- Normalização de cor via gray-world
+- Segmentação por chromaticity r/g normalizada
+- Carregamento e aplicação de histogramas para backprojection
+- Geração de máscaras binárias a partir de diferentes espaços de cor
+
+FUNÇÕES PRINCIPAIS:
+
+Função: gray_world(bgr: np.ndarray) -> np.ndarray
+  - Descrição: Aplica normalização de cor gray-world
+  - Parâmetros:
+    * bgr: Imagem BGR (uint8, HxWx3)
+  - Retorno: Imagem BGR normalizada (uint8, HxWx3)
+  - Algoritmo:
+    1. Converte para float32
+    2. Calcula média de cada canal: avg_b, avg_g, avg_r
+    3. Calcula média geral: avg_gray = mean(avg_b, avg_g, avg_r)
+    4. Calcula fatores de escala: scale_c = avg_gray / (avg_c + 1e-6)
+    5. Multiplica cada canal pelo respectivo fator
+    6. Clippa para [0, 255] e converte para uint8
+  - Objetivo: Remover dominância de cor (cast de iluminação), assumindo
+    que a média da cena deve ser cinza neutro
+  - Uso: Habilitar via color.enable_gray_world para normalizar antes de HSV
+
+Função: rg_chromaticity_mask(bgr: np.ndarray, thresholds: Dict[str, float]) -> np.ndarray
+  - Descrição: Cria máscara baseada em chromaticity r e g normalizada
+  - Parâmetros:
+    * bgr: Imagem BGR (uint8, HxWx3)
+    * thresholds: Dict com r_min, r_max, g_min, g_max (valores 0-1)
+  - Retorno: Máscara binária (uint8, 0 ou 255)
+  - Algoritmo:
+    1. Converte para float32
+    2. Calcula soma dos canais: s = B + G + R
+    3. Normaliza: r = R / (s + 1e-6), g = G / (s + 1e-6)
+    4. Cria condição: (r >= r_min) AND (r <= r_max) AND (g >= g_min) AND (g <= g_max)
+    5. Converte booleano para uint8 (0 ou 255)
+  - Objetivo: Segmentação invariante a intensidade (foca em cor pura)
+  - Uso: Habilitar via color.enable_rg para complementar HSV
+
+Função: load_backproj_hist(path: str)
+  - Descrição: Carrega histograma 2D (Hue-Saturation) de arquivo .npy
+  - Parâmetros:
+    * path: Caminho para arquivo .npy
+  - Retorno: Histograma normalizado (numpy array 2D, float32, 0-255) ou None
+  - Comportamento:
+    1. Verifica se path existe
+    2. Carrega via np.load(path)
+    3. Converte para float32
+    4. Normaliza com cv2.normalize(hist, 0, 255, NORM_MINMAX)
+    5. Retorna histograma
+    6. Em caso de erro: registra warning e retorna None
+  - Uso: Pré-carregar histograma de cones conhecidos para backprojection
+
+Função: mask_from_backproj(hsv: np.ndarray, hist: np.ndarray, thresh: int = 50) -> np.ndarray
+  - Descrição: Gera máscara via backprojection de histograma H-S
+  - Parâmetros:
+    * hsv: Imagem HSV (uint8, HxWx3)
+    * hist: Histograma 2D pré-carregado (float32)
+    * thresh: Threshold para binarização (int, 0-255, default 50)
+  - Retorno: Máscara binária (uint8, 0 ou 255)
+  - Algoritmo:
+    1. Se hist é None: retorna máscara zerada
+    2. Calcula backprojection: back = calcBackProject([hsv], [0,1], hist, [0,180,0,256], 1)
+       - Canais 0,1 = Hue e Saturation
+       - Ranges: Hue 0-180, Saturation 0-256
+    3. Aplica threshold: mask = threshold(back, thresh, 255, THRESH_BINARY)
+    4. Retorna mask
+  - Objetivo: Detectar pixels com cor similar ao histograma (treino com exemplos positivos)
+  - Uso: Habilitar via color.enable_backproj após gerar histograma de cones
+
+CONEXÕES COM OUTROS COMPONENTES:
+- USADO POR: cone_tracker.detector (gray_world, rg_chromaticity_mask, load_backproj_hist, mask_from_backproj)
+
+DEPENDÊNCIAS EXTERNAS:
+- cv2: calcBackProject, threshold, normalize
+- numpy: Arrays, operações matemáticas
+- os: Verificação de existência de arquivo
+
+PONTOS DE ATENÇÃO:
+1. gray_world assume cena com equilíbrio de cores (falha em cenas monocromáticas)
+2. rg chromaticity perde informação de intensidade (útil mas não suficiente sozinho)
+3. Backprojection requer histograma pré-gerado (não incluso no repo)
+4. Histograma deve ser 2D (Hue-Saturation), não 3D
+5. Threshold de backprojection (default 50) precisa ajuste por cenário
+
+LIMITAÇÕES:
+- gray_world não corrige iluminação não-uniforme (spotlight, sombras)
+- rg chromaticity sensível a ruído em pixels escuros (divisão por soma pequena)
+- Backprojection requer coleta de amostras positivas (workflow manual)
+- Não implementa métodos avançados (Retinex, color constancy neural)
+
+RECOMENDAÇÕES TÉCNICAS:
+1. gray_world é útil em outdoor com iluminação natural (sol, nublado)
+2. Desabilitar gray_world em indoor com iluminação artificial balanceada
+3. Para gerar histograma de backprojection:
+   a. Capturar frames com cones conhecidos
+   b. Anotar manualmente regiões de cone
+   c. Calcular histograma H-S das regiões
+   d. Salvar com np.save("cone_hist.npy", hist)
+4. Ajustar backproj_thresh empiricamente (50-100 típico)
+5. rg chromaticity útil para laranja (alto r, médio g)
+6. Combinar múltiplas máscaras via OR para robustez
+
+--------------------------------------------------------------------------------
+6. MÓDULO: cone_tracker/config.py
+--------------------------------------------------------------------------------
+
+CAMINHO RELATIVO: cone_tracker/config.py
+
+DESCRIÇÃO DETALHADA:
+Gerenciamento centralizado de configuração do sistema via arquivos YAML.
+Fornece configuração padrão (DEFAULT_CONFIG), carregamento com merge profundo,
+salvamento e hot-reload (detecção automática de mudanças).
+
+RESPONSABILIDADES:
+- Definir configuração padrão completa (DEFAULT_CONFIG)
+- Carregar configuração de arquivo YAML
+- Fazer merge profundo de configuração de usuário com defaults
+- Salvar configuração atual para YAML
+- Monitorar arquivo de config para mudanças (hot-reload)
+
+CONSTANTES:
+
+DEFAULT_CONFIG: Dict[str, Any]
+------------------------------
+Descrição: Configuração padrão completa com todos os parâmetros documentados
+Seções principais:
+  - camera: Configuração de captura (índice, resoluções, FPS, vídeo, HFOV)
+  - debug: Opções de visualização e logging
+  - hsv_orange: Ranges HSV para detecção de laranja (2 ranges)
+  - morphology: Parâmetros de operações morfológicas
+  - grouping: Parâmetros de agrupamento de partes
+  - geometry: Validação geométrica e thresholds
+  - weights: Pesos para cálculo de score
+  - tracking: Parâmetros do tracker multi-objeto
+  - clahe: Configuração de equalização de histograma
+  - color: Opções de processamento de cor avançado
+
+Valores notáveis:
+  - camera.process_width/height: 960x540 (processamento)
+  - camera.capture_width/height: 1920x1080 (captura)
+  - camera.fps: 30
+  - camera.hfov_deg: 70.0 (campo de visão horizontal)
+  - geometry.aspect_min/max: 1.0 a 6.0 (cones variam de quadrados a muito altos)
+  - tracking.lost_timeout: 0.6s (MUITO CURTO - recomenda-se 3.0s)
+  - tracking.association_max_distance: 140 pixels
+  - tracking.min_frames_for_confirm: 6 frames
+
+FUNÇÕES PRINCIPAIS:
+
+Função: deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]
+  - Descrição: Faz merge recursivo de dois dicionários
+  - Parâmetros:
+    * base: Dicionário base (padrões)
+    * override: Dicionário com overrides (config do usuário)
+  - Retorno: Novo dicionário merged
+  - Algoritmo:
+    1. Copia base para out
+    2. Para cada (k, v) em override:
+       a. Se v é dict E out[k] é dict: recursivamente merge
+       b. Senão: sobrescreve out[k] = v
+    3. Retorna out
+  - Comportamento: Override tem precedência, mas preserva chaves não especificadas
+
+Função: load_config(path: str = "cone_config.yaml") -> Dict[str, Any]
+  - Descrição: Carrega configuração de YAML com merge de defaults
+  - Parâmetros:
+    * path: Caminho para arquivo YAML (default "cone_config.yaml")
+  - Retorno: Dicionário de configuração completo
+  - Fluxo:
+    1. Inicializa cfg = cópia de DEFAULT_CONFIG
+    2. Se arquivo não existe: retorna DEFAULT_CONFIG
+    3. Tenta abrir e parsear YAML (yaml.safe_load)
+    4. Se sucesso: cfg = deep_merge(DEFAULT_CONFIG, user_config)
+    5. Se erro: registra exception, retorna DEFAULT_CONFIG
+    6. Faz segundo merge: cfg = deep_merge(DEFAULT_CONFIG, cfg)
+       (garantir que novos campos em DEFAULT apareçam)
+    7. Retorna cfg
+  - Tratamento de erros: Logs exception mas não falha (usa defaults)
+
+Função: save_config(config: Dict[str, Any], path: str = "cone_config.yaml") -> None
+  - Descrição: Salva configuração para arquivo YAML
+  - Parâmetros:
+    * config: Dicionário de configuração
+    * path: Caminho de destino (default "cone_config.yaml")
+  - Retorno: None
+  - Comportamento:
+    1. Abre arquivo para escrita
+    2. Serializa via yaml.dump(config, default_flow_style=False, sort_keys=False)
+    3. Registra log "Config saved to {path}"
+    4. Se erro: registra exception
+
+Variável global: _config_mtime: Dict[str, float]
+  - Descrição: Cache de timestamps de modificação de arquivos (para hot-reload)
+  - Estrutura: {path: mtime}
+
+Função: watch_config(path: str = "cone_config.yaml") -> bool
+  - Descrição: Verifica se arquivo de config foi modificado desde última chamada
+  - Parâmetros:
+    * path: Caminho do arquivo a monitorar
+  - Retorno: True se modificado, False caso contrário
+  - Algoritmo:
+    1. Se arquivo não existe: retorna False
+    2. Obtém mtime atual via os.path.getmtime(path)
+    3. Se primeira vez monitorando:
+       - Armazena mtime em _config_mtime[path]
+       - Retorna False (sem mudança na primeira chamada)
+    4. Se mtime > mtime_armazenado:
+       - Atualiza _config_mtime[path] = mtime
+       - Retorna True (arquivo mudou)
+    5. Senão: retorna False
+  - Uso: Chamado no loop principal de app.py para hot-reload
+
+FLUXO DE HOT-RELOAD:
+```
+// No app.py, dentro do loop:
+se watch_config("cone_config.yaml") == True:
+  app.reload_config()  // Recarrega tudo
+```
+
+CONEXÕES COM OUTROS COMPONENTES:
+- USADO POR: Todos os módulos (detector, tracker, visualizer, app)
+- EXPORTADO VIA: cone_tracker/__init__.py (load_config, save_config, DEFAULT_CONFIG)
+
+DEPENDÊNCIAS EXTERNAS:
+- yaml: Serialização/deserialização YAML
+- os: Verificação de existência e mtime de arquivos
+
+PONTOS DE ATENÇÃO:
+1. DUPLO MERGE em load_config: Primeiro user->default, depois default->resultado.
+   Garante novos campos de DEFAULT aparecerem mesmo em configs antigos.
+2. watch_config retorna False na primeira chamada (inicialização do cache)
+3. Hot-reload REINICIALIZA componentes (detector, tracker, visualizer), perdendo
+   estado de tracking.
+4. save_config sobrescreve arquivo completamente (não faz merge parcial)
+5. YAML parser pode falhar com sintaxe incorreta (usa defaults como fallback)
+
+LIMITAÇÕES:
+- Não valida tipos ou ranges de valores (aceita qualquer YAML)
+- Não suporta múltiplos arquivos de config (profiles)
+- Hot-reload perde estado de tracking (não persiste)
+- Não notifica sobre campos desconhecidos (podem indicar typos)
+- Não suporta variáveis de ambiente ou interpolação
+
+RECOMENDAÇÕES TÉCNICAS:
+1. Validar configuração após load (ex: asserts para ranges críticos)
+2. Documentar todas as opções em cone_config.yaml.example
+3. Para produção, considerar schemas (ex: pydantic, cerberus) para validação
+4. Implementar config profiles (dev, prod, test) via arquivos separados
+5. Adicionar versioning de config para migração automática
+6. Logar diferenças entre DEFAULT e user config no startup
+7. Considerar format-preserving YAML library (ruamel.yaml) para preservar
+   comentários ao salvar
+
+--------------------------------------------------------------------------------
+7. MÓDULO: cone_tracker/visualizer.py
+--------------------------------------------------------------------------------
+
+CAMINHO RELATIVO: cone_tracker/visualizer.py
+
+DESCRIÇÃO DETALHADA:
+Responsável por renderizar visualizações de detecção e tracking sobre frames.
+Desenha bounding boxes, labels, FPS, contadores e informações de debug.
+
+RESPONSABILIDADES:
+- Desenhar bounding boxes coloridos por track ID
+- Exibir labels com ID, estado e score
+- Renderizar informações de FPS e contadores
+- Mostrar rejeições (com motivo) se habilitado
+- Exibir mensagem de reload de config temporária
+
+CLASSES E MÉTODOS PRINCIPAIS:
+
+Classe: Visualizer
+------------------
+Assinatura: Visualizer(config: Dict[str, Any])
+
+Atributo: COLORS
+  - Descrição: Lista de cores BGR para tracks
+  - Valor: [(0,255,0), (0,200,255), (255,0,0), (255,255,0), (255,0,255), (0,255,255), (180,180,0), (0,180,180)]
+  - Uso: Cores rotacionadas por track_id % len(COLORS)
+
+Método: __init__(self, config: Dict[str, Any])
+  - Descrição: Inicializa visualizador com configuração
+  - Parâmetros:
+    * config: Dicionário de configuração completo
+  - Comportamento: Extrai seção debug da config
+
+Método: _color(self, track_id: int) -> Tuple[int, int, int]
+  - Descrição: Retorna cor para um track ID
+  - Parâmetros:
+    * track_id: ID do track
+  - Retorno: Cor BGR (tupla)
+  - Algoritmo: COLORS[track_id % len(COLORS)]
+
+Método: draw(self, frame: np.ndarray, tracks: List[Track], rejects: List[Tuple[Tuple[int, int, int, int], str]], fps: float, config_reload_msg: str = None) -> np.ndarray
+  - Descrição: Desenha todas as visualizações sobre o frame
+  - Parâmetros:
+    * frame: Frame BGR (numpy array, será modificado)
+    * tracks: Lista de tracks para desenhar
+    * rejects: Lista de detecções rejeitadas (bbox, motivo)
+    * fps: FPS atual
+    * config_reload_msg: Mensagem de reload (opcional, exibida temporariamente)
+  - Retorno: Frame anotado (mesmo array modificado)
+  
+  - Renderizações (em ordem):
+    
+    1. FPS (canto superior esquerdo):
+       - Texto: "FPS: {fps:.1f}"
+       - Posição: (10, 30)
+       - Cor: Verde (0,255,0)
+       - Font: FONT_HERSHEY_SIMPLEX, escala 0.7, espessura 2
+    
+    2. Contador de Tracks:
+       - Calcula confirmed_count = tracks com state==CONFIRMED
+       - Calcula suspect_count = tracks com state==SUSPECT
+       - Texto: "Tracks: {total} ({confirmed} conf, {suspect} susp)"
+       - Posição: (10, 60)
+       - Cor: Verde (0,255,0)
+    
+    3. Contador de Rejeições:
+       - Texto: "Rejects: {len(rejects)}"
+       - Posição: (10, 90)
+       - Cor: Vermelha (0,0,255)
+    
+    4. Mensagem de Reload (se config_reload_msg não None):
+       - Texto: config_reload_msg (ex: "⚙️ Config recarregada!")
+       - Posição: (10, 120)
+       - Cor: Ciano (0,255,255)
+       - Nota: Exibida por 3 segundos (controlado em app.py)
+    
+    5. Bounding Boxes de Tracks:
+       Para cada track em tracks:
+         a. Se track.state == CONFIRMED:
+            - cor = self._color(track.track_id)
+         b. Senão (SUSPECT):
+            - Se draw_suspects habilitado:
+              + cor = Amarelo (0,255,255)
+            - Senão: skip (não desenha)
+         
+         c. Desenha retângulo:
+            - cv2.rectangle(frame, (x,y), (x+w, y+h), cor, espessura=2)
+         
+         d. Desenha label acima do retângulo:
+            - Texto: "ID {id} {state.name} avg={avg_score:.2f}"
+            - Posição: (x, y-10) ou (x, 0) se y muito pequeno
+            - Cor: mesma do retângulo
+            - Font: FONT_HERSHEY_SIMPLEX, escala 0.45, espessura 2
+    
+    6. Rejeições (se show_rejection_reason habilitado):
+       Para cada (bbox, motivo) em rejects:
+         a. Desenha retângulo vermelho:
+            - cv2.rectangle(frame, (x,y), (x+w, y+h), (0,0,255), espessura=2)
+         
+         b. Desenha motivo acima:
+            - Texto: motivo (ex: "score=0.28")
+            - Posição: (x, y-5) ou (x, 0) se y muito pequeno
+            - Cor: Vermelha (0,0,255)
+            - Font: FONT_HERSHEY_SIMPLEX, escala 0.5, espessura 2
+
+CONEXÕES COM OUTROS COMPONENTES:
+- USADO POR: app.App (self.vis.draw())
+- IMPORTA: tracker.Track, utils.ConeState
+- EXPORTADO VIA: cone_tracker/__init__.py
+
+PARÂMETROS CONFIGURÁVEIS:
+- debug.draw_suspects: Desenhar tracks SUSPECT em amarelo (bool, default false)
+- debug.show_rejection_reason: Desenhar rejeições em vermelho (bool, default false)
+
+DEPENDÊNCIAS EXTERNAS:
+- cv2: putText, rectangle
+- numpy: Arrays
+
+PONTOS DE ATENÇÃO:
+1. MODIFICAÇÃO IN-PLACE: Frame é modificado diretamente (retorna mesmo array)
+2. ORDEM DE CORES: Cores rotacionam por ID. Tracks deletados e recriados podem
+   reutilizar cores (IDs crescem infinitamente).
+3. SUSPECTS SÓ APARECEM SE HABILITADO: Default é draw_suspects=false (só confirmed)
+4. REJEIÇÕES: Pode poluir visualização se muitas. Usar apenas para debug.
+5. FPS POSITION: Informações sempre desenhadas, mesmo se show_windows=false
+   (importante para output_video_path)
+
+LIMITAÇÕES:
+- Cores fixas (8 cores apenas, repetem após 8 tracks)
+- Não desenha trajetórias (histórico de posições)
+- Não exibe métricas adicionais (velocidade, aceleração)
+- Labels podem sobrepor se tracks próximos
+- Não suporta zoom ou pan interativo
+
+RECOMENDAÇÕES TÉCNICAS:
+1. Para mais de 8 tracks simultâneos, expandir paleta COLORS
+2. Implementar geração dinâmica de cores (hashing de ID -> HSV)
+3. Adicionar opção de desenhar trajetória (últimas N posições)
+4. Implementar overlay semi-transparente para melhor legibilidade
+5. Adicionar opção de tamanho de fonte configurável
+6. Considerar biblioteca de visualização mais avançada (ex: vis_utils do TensorFlow)
+
+--------------------------------------------------------------------------------
+8. MÓDULO: test7.py
+--------------------------------------------------------------------------------
+
+CAMINHO RELATIVO: test7.py (raiz do repositório)
+
+DESCRIÇÃO DETALHADA:
+Ponto de entrada principal da aplicação. Script minimalista que configura
+logging e inicia a aplicação via cone_tracker.App.
+
+RESPONSABILIDADES:
+- Configurar logging básico (level INFO, formato com timestamp)
+- Importar e instanciar App
+- Executar loop principal
+
+CÓDIGO COMPLETO:
+```python
+#!/usr/bin/env python3
+"""
+Main entry point for cone detection and tracking system.
+This script uses the modular cone_tracker package.
+"""
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+
+from cone_tracker import App
+
+if __name__ == "__main__":
+    App().run()
+```
+
+FLUXO DE EXECUÇÃO:
+1. Configura logging com level INFO e formato detalhado
+2. Importa classe App de cone_tracker
+3. Se executado como script principal:
+   a. Instancia App() (carrega config, cria componentes)
+   b. Chama App().run() (inicia loop principal)
+   c. Loop roda até usuário pressionar 'q' ou erro fatal
+
+COMO EXECUTAR:
+```bash
+# Execução básica
+python3 test7.py
+
+# Com config customizado (editar cone_config.yaml antes)
+python3 test7.py
+
+# Exemplo com vídeo de entrada
+# (configurar camera.video_path em cone_config.yaml)
+python3 test7.py
+
+# Exemplo headless (salvar vídeo processado)
+# (configurar camera.output_video_path e debug.show_windows=false)
+python3 test7.py
+```
+
+CONEXÕES COM OUTROS COMPONENTES:
+- IMPORTA: cone_tracker.App
+- PONTO DE ENTRADA: Executado pelo usuário ou scripts de automação
+
+DEPENDÊNCIAS EXTERNAS:
+- logging: Configuração de logs
+- cone_tracker: Pacote principal
+
+PONTOS DE ATENÇÃO:
+1. LOGGING GLOBAL: Configuração de logging afeta TODOS os módulos que usam
+   logging padrão do Python.
+2. SHEBANG: #!/usr/bin/env python3 permite execução direta (chmod +x test7.py)
+3. NOME "test7.py": Nome legado, deveria ser renomeado para main.py ou run_tracker.py
+4. SEM ARGUMENTOS CLI: Não aceita argumentos de linha de comando (tudo via config YAML)
+
+LIMITAÇÕES:
+- Não suporta argumentos CLI (--config, --video, --output, etc.)
+- Não implementa signal handlers (Ctrl+C pode deixar câmera aberta)
+- Logging sempre em INFO (não configurável via CLI)
+- Não valida ambiente (OpenCV, GPU, etc.) antes de rodar
+
+RECOMENDAÇÕES TÉCNICAS:
+1. Renomear para main.py ou run_cone_tracker.py
+2. Adicionar argparse para:
+   - Especificar arquivo de config: --config path/to/config.yaml
+   - Override de parâmetros: --video input.mp4 --output result.mp4
+   - Level de logging: --log-level DEBUG
+3. Implementar signal handler (SIGINT, SIGTERM) para cleanup graceful
+4. Adicionar validação de ambiente:
+   - Verificar se OpenCV foi compilado com GUI (cv2.getBuildInformation())
+   - Verificar se câmera está disponível antes de rodar
+5. Implementar modo dry-run (--dry-run) para validar config sem executar
+
+
+================================================================================
+ARQUITETURA E FLUXOS DE DADOS
+================================================================================
+
+VISÃO GERAL DA ARQUITETURA:
+---------------------------
+O sistema segue arquitetura modular em camadas com separação clara de responsabilidades:
+
+CAMADA 1 - ENTRADA (Input Layer):
+  - Captura de vídeo/câmera (OpenCV VideoCapture)
+  - Suporte a múltiplas fontes (câmera USB, arquivos MP4, streams RTSP)
+  - Redimensionamento automático para resolução de processamento
+
+CAMADA 2 - DETECÇÃO (Detection Layer):
+  - Pré-processamento de imagem (blur, CLAHE, normalização de cor)
+  - Segmentação multi-modal (HSV, Lab, R/G, backprojection)
+  - Operações morfológicas (abertura, fechamento)
+  - Extração de contornos e partes
+  - Agrupamento de partes conectadas
+  - Validação geométrica rigorosa
+  - Cálculo de confidence scores
+
+CAMADA 3 - TRACKING (Tracking Layer):
+  - Associação de detecções a tracks existentes (greedy algorithm)
+  - Criação de novos tracks
+  - Atualização de posições via EMA
+  - Gerenciamento de estados (SUSPECT → CONFIRMED)
+  - Deleção de tracks perdidos
+
+CAMADA 4 - SAÍDA (Output Layer):
+  - Visualização de resultados
+  - Cálculo de heading/steering (ângulos e distâncias)
+  - Logs estruturados
+  - Gravação de vídeo processado
+  - Interface GUI (opcional)
+
+FLUXO DE DADOS COMPLETO (DO SENSOR ATÉ A AÇÃO):
+-----------------------------------------------
+
+FRAME n (tempo t):
+  |
+  v
+[1. CAPTURA]
+  - VideoCapture.read() -> frame_raw (1920x1080 BGR)
+  - cv2.resize() -> frame_proc (960x540 BGR)
+  |
+  v
+[2. PRÉ-PROCESSAMENTO - detector.preprocess()]
+  - Se gray_world: normalizar cores
+  - GaussianBlur(5x5) -> frame_blur
+  - cvtColor(BGR->HSV) -> frame_hsv
+  - Split canais: H, S, V
+  - CLAHE no canal V -> V_eq
+  - Merge: frame_hsv_eq
+  |
+  v
+[3. SEGMENTAÇÃO - detector.get_mask()]
+  - Máscara HSV (2 ranges para laranja): mask_hsv
+  - Se Lab habilitado: mask_lab
+  - Se RG habilitado: mask_rg
+  - Se backproj habilitado: mask_bp
+  - Combinar: mask_combined = OR(todas as máscaras)
+  - Morfologia: OPEN -> CLOSE -> mask_clean
+  |
+  v
+[4. EXTRAÇÃO DE PARTES - detector._part_boxes()]
+  - findContours(mask_clean) -> contours
+  - Filtrar por área mínima -> part_boxes
+  - Ordenar por y crescente -> part_boxes_sorted
+  |
+  v
+[5. AGRUPAMENTO - detector._build_groups()]
+  - Construir grafo de conectividade (overlap horizontal + gap vertical)
+  - DFS para componentes conectados -> groups
+  |
+  v
+[6. VALIDAÇÃO - detector.detect()]
+  Para cada group:
+    - União de bboxes + padding -> candidate_bbox
+    - Validar área: min < area < max
+    - Validar aspect: min < h/w < max
+    - Validar fill: min < pixels_brancos/area < max
+    - Calcular profile_score (forma cônica)
+    - Calcular score final: weighted_sum(profile, fill, aspect)
+    - Se score >= threshold: ACEITAR
+    - Senão: REJEITAR
+  |
+  - Ordenar aceitos por score -> detections = [(bbox, score, data), ...]
+  |
+  v
+[7. ASSOCIAÇÃO - tracker._associate_greedy()]
+  - Para cada track existente:
+    + Calcular distância euclidiana até cada detecção
+    + Se dist <= max_distance: adicionar a candidatos
+  - Ordenar candidatos por distância
+  - Associação greedy (primeiro disponível) -> matches
+  |
+  v
+[8. ATUALIZAÇÃO - tracker.update()]
+  - Para tracks associados:
+    + Atualizar posição via EMA: pos_new = α*det + (1-α)*pos_old
+    + Adicionar score ao histórico
+    + Resetar miss_counter
+  - Para tracks não associados:
+    + Se CONFIRMED: incrementar miss_counter
+    + Se miss_counter > grace_period: voltar a SUSPECT
+  - Para detecções não associadas:
+    + Criar novos tracks (se < max_tracks)
+  - Deletar tracks com timeout
+  |
+  v
+[9. CONFIRMAÇÃO - tracker.update()]
+  Para cada track:
+    - frames_vistos = len(score_hist)
+    - avg_score = mean(score_hist)
+    - Se frames_vistos >= min_frames E avg_score >= threshold:
+      + state = CONFIRMED
+  |
+  -> confirmed_tracks = [tracks com state==CONFIRMED]
+  |
+  v
+[10. CÁLCULO DE HEADING - app._debug_print_heading()]
+  Para cada confirmed track:
+    - err_px = track.cx - frame_center_x
+    - focal_px = (frame_w/2) / tan(hfov/2)
+    - angle_deg = atan(err_px / focal_px) * 180/π
+    - Se cone_height_m conhecido:
+      + dist_m = (cone_height_m * focal_px) / track.h
+  |
+  -> HEADING_DBG logs: id, cx, err_px, err_deg, bbox_h, est_dist, avg_score
+  |
+  v
+[11. VISUALIZAÇÃO - visualizer.draw()]
+  - Desenhar FPS, contadores, rejects
+  - Para cada track (confirmed ou suspect se habilitado):
+    + Desenhar bbox colorido
+    + Desenhar label: "ID {id} {state} avg={score}"
+  |
+  -> frame_anotado
+  |
+  v
+[12. SAÍDA]
+  - Se video_writer: gravar frame_anotado
+  - Se show_windows: exibir frame_anotado em janela
+  - Processar teclas (q, s, r)
+  |
+  v
+LOOP para frame n+1
+
+CONTRATOS DE DADOS (TIPOS E FORMATOS):
+--------------------------------------
+
+Tipo: Detection
+  Formato: Tuple[Tuple[int, int, int, int], float, Dict[str, Any]]
+  Estrutura:
+    - [0]: bbox = (x: int, y: int, w: int, h: int)
+    - [1]: score = float (0.0 a 1.0)
+    - [2]: data = {
+        "profile": float,        # Profile score (0-1)
+        "fill": float,           # Fill ratio (0-1)
+        "aspect": float,         # Aspect ratio h/w
+        "aspect_score": float,   # Score normalizado de aspect
+        "score": float,          # Score final weighted
+        "parts": int             # Número de partes conectadas
+      }
+
+Tipo: Track
+  Estrutura: Dataclass com campos:
+    - track_id: int (único, crescente)
+    - cx, cy: float (centro do bbox)
+    - w, h: float (dimensões)
+    - state: ConeState (SUSPECT, CONFIRMED, LOST)
+    - created_at: float (timestamp de criação)
+    - last_seen: float (timestamp última detecção)
+    - last_good_time: float (timestamp última vez CONFIRMED)
+    - score_hist: deque[float] (histórico de scores, maxlen=10)
+    - miss_counter: int (frames consecutivos sem detecção)
+
+Tipo: Rejection
+  Formato: Tuple[Tuple[int, int, int, int], str]
+  Estrutura:
+    - [0]: bbox = (x: int, y: int, w: int, h: int)
+    - [1]: reason = str (ex: "area=850", "aspect=0.8", "score=0.28")
+
+Tipo: Config
+  Formato: Dict[str, Any] (nested dicts)
+  Seções: camera, debug, hsv_orange, morphology, grouping, geometry, weights, tracking, clahe, color
+
+MENSAGENS INTERNAS (LOGS E DEBUG):
+----------------------------------
+
+Log de Detecção:
+  - "🔴 Frame com {n} rejeições:"
+  - "   ✗ {reason}" (ex: "area=850", "score=0.28")
+
+Log de Tracking:
+  - "✅ Track {id} CONFIRMADO! frames={n}, avg={score:.2f}"
+  - "🗑️ Track {id} DELETADO: frames={n}, avg={score:.2f}, idade={age:.2f}s"
+  - "🟡 Frame com {n} suspects:"
+  - "   ? ID {id}: frames={n}, avg={score:.2f}"
+
+Log de Heading:
+  - "HEADING_DBG: detected=True id={id} cx={cx:.1f} err_px={err:+.1f} err_deg={angle:+.2f} bbox_h={h} [est_dist={dist:.2f}m] avg_score={score:.2f}"
+  - "HEADING_DBG: detected=False" (se sem tracks)
+
+Log de Config:
+  - "⚙️ Recarregando configuração..."
+  - "✅ Configuração recarregada com sucesso!"
+  - "⚙️ Config recarregada!" (overlay no vídeo por 3s)
+
+PONTOS DE INTEGRAÇÃO:
+---------------------
+
+1. ENTRADA DE VÍDEO:
+   - Interface: cv2.VideoCapture
+   - Formatos suportados: MP4, AVI, RTSP streams, USB cameras (V4L2)
+   - Configuração: camera.video_path ou camera.index
+
+2. SAÍDA DE CONTROLE (PARA NAVEGAÇÃO):
+   - Interface: Logs HEADING_DBG (stdout)
+   - Formato: Texto estruturado parseável
+   - Dados: track_id, cx, err_px, err_deg, bbox_h, est_dist, avg_score
+   - Uso: Sistema de navegação pode parsear logs para decisões de steering
+
+3. SAÍDA DE VÍDEO:
+   - Interface: cv2.VideoWriter
+   - Formato: MP4 (codec mp4v)
+   - Configuração: camera.output_video_path
+
+4. INTERFACE GUI:
+   - Interface: cv2.imshow, cv2.waitKey
+   - Janelas: "Tracker", "Mask" (opcional)
+   - Controles: 'q' (quit), 's' (save config), 'r' (reload)
+
+5. CONFIGURAÇÃO EXTERNA:
+   - Interface: Arquivo YAML (cone_config.yaml)
+   - Hot-reload: Detecta mudanças via mtime, recarrega automaticamente
+
+LATÊNCIAS E PERFORMANCE:
+------------------------
+
+Pipeline típico (960x540, CPU Intel i5):
+  - Captura: ~1ms
+  - Pré-processamento: ~5-8ms
+  - Segmentação: ~10-15ms (todas as máscaras habilitadas)
+  - Morfologia: ~3-5ms
+  - Contornos + agrupamento: ~2-5ms
+  - Validação: ~1-3ms por candidato
+  - Tracking: ~1-2ms
+  - Visualização: ~2-3ms
+  - Total: ~25-45ms -> 22-40 FPS
+
+Gargalos principais:
+  1. Segmentação de cor (especialmente backprojection)
+  2. Operações morfológicas (se muitas iterações)
+  3. Cálculo de profile_score (muitos slices)
+
+Otimizações possíveis:
+  - Desabilitar máscaras não essenciais (Lab, RG, backproj)
+  - Reduzir iterações de morfologia
+  - Reduzir profile_slices
+  - Downscale adicional para detecção (ex: 640x360)
+  - GPU aceleração (OpenCV com CUDA)
+
+
+================================================================================
+ALGORITMOS E MODELOS
+================================================================================
+
+PIPELINE ATUAL DE DETECÇÃO:
+---------------------------
+
+O sistema atual usa DETECÇÃO POR SEGMENTAÇÃO DE COR + VALIDAÇÃO GEOMÉTRICA.
+Não utiliza aprendizado de máquina (ML) ou redes neurais.
+
+ETAPA 1: SEGMENTAÇÃO POR COR
+  Algoritmos usados:
+    1. HSV Thresholding (sempre ativo):
+       - Dois ranges HSV para capturar laranja (wrap-around em Hue)
+       - cv2.inRange() em paralelo
+       - Combinação via OR lógico
+    
+    2. Lab Color Space (opcional):
+       - Thresholding nos canais a e b (cromaticidade)
+       - Independente de luminosidade
+    
+    3. R/G Chromaticity (opcional):
+       - Normalização: r = R/(R+G+B), g = G/(R+G+B)
+       - Thresholding em espaço rg
+       - Invariante a intensidade
+    
+    4. Histogram Backprojection (opcional):
+       - Histograma 2D Hue-Saturation pré-computado
+       - cv2.calcBackProject() para probabilidade de cone
+       - Thresholding binário
+
+  Combinação: OR lógico de todas as máscaras ativas
+
+ETAPA 2: MORFOLOGIA
+  Algoritmos:
+    1. Abertura (Opening):
+       - cv2.morphologyEx(MORPH_OPEN)
+       - Remove ruído (pequenas manchas)
+       - Kernel retangular 3x3
+    
+    2. Fechamento (Closing):
+       - cv2.morphologyEx(MORPH_CLOSE)
+       - Preenche buracos internos
+       - Kernel retangular 7x7
+
+ETAPA 3: EXTRAÇÃO DE COMPONENTES
+  Algoritmo:
+    - cv2.findContours(RETR_EXTERNAL, CHAIN_APPROX_SIMPLE)
+    - Filtragem por área mínima
+    - Extração de bounding boxes via cv2.boundingRect()
+
+ETAPA 4: AGRUPAMENTO DE PARTES
+  Algoritmo de grafo de conectividade:
+    1. Construção do grafo:
+       - Nós = bounding boxes de partes
+       - Arestas = partes verticalmente alinhadas e próximas
+       - Critérios de conexão:
+         + Gap vertical <= max_y_gap (80 pixels)
+         + Sobreposição horizontal >= min_x_overlap_ratio (0.20)
+         OU centros horizontais próximos (<= max_x_center_diff)
+    
+    2. Busca em componentes conectados:
+       - DFS (Depth-First Search) para encontrar componentes conectados
+       - Cada componente = grupo de partes que pertencem ao mesmo cone
+
+ETAPA 5: VALIDAÇÃO GEOMÉTRICA
+  Filtros em cascata (rejeição progressiva):
+    1. Filtro de Área:
+       - area = w * h
+       - Rejeita se area < 1400 OU area > 450000
+    
+    2. Filtro de Aspect Ratio:
+       - aspect = h / w
+       - Rejeita se aspect < 1.0 OU aspect > 6.0
+       - (Cones variam de quadrados a muito alongados)
+    
+    3. Filtro de Fill Ratio:
+       - fill = pixels_brancos / area_total
+       - Rejeita se fill < 0.08 OU fill > 0.65
+       - (Previne detecções muito vazias ou muito densas)
+    
+    4. Filtro de Profile Score:
+       - Analisa crescimento de largura de cima para baixo
+       - Calcula monotonicity score e top-vs-bottom ratio
+       - Rejeita se score final < min_frame_score (0.35)
+
+ETAPA 6: SCORE FINAL
+  Score weighted:
+    score = 0.50 * profile + 0.35 * fill + 0.15 * aspect_score
+  
+  Onde:
+    - profile ∈ [0, 1]: quão cônico é o perfil
+    - fill ∈ [0, 1]: fill ratio normalizado
+    - aspect_score = 1 - |aspect - 2.0| / 2.5 ∈ [0, 1]: proximidade ao aspect ideal
+
+TRACKING: ALGORITMO GREEDY COM EMA
+-----------------------------------
+
+ASSOCIAÇÃO (Hungarian vs Greedy):
+  Algoritmo atual: GREEDY
+    - Vantagem: Simples, rápido O(n*m log(nm))
+    - Desvantagem: Não garante associação global ótima
+    - Adequado para: <= 10 cones simultâneos, baixa densidade
+  
+  Alternativa: HUNGARIAN (not implemented)
+    - Vantagem: Associação globalmente ótima O(n³)
+    - Desvantagem: Mais complexo, mais lento
+    - Adequado para: > 10 cones, alta densidade, oclusões frequentes
+
+SUAVIZAÇÃO: EXPONENTIAL MOVING AVERAGE (EMA)
+  Fórmula: pos_new = α * det_pos + (1-α) * pos_old
+  Onde:
+    - α = ema_alpha (default 0.25)
+    - α alto (0.4-0.6): mais reativo, menos suave
+    - α baixo (0.1-0.2): mais suave, menos reativo
+  
+  Benefícios:
+    - Reduz jitter de detecções ruidosas
+    - Suaviza trajetórias
+    - Simples e eficiente
+
+GERENCIAMENTO DE ESTADOS:
+  Máquina de estados:
+    SUSPECT -> CONFIRMED -> [DELETED]
+           ↑←←←←←←←←←←←←←┘ (grace period)
+  
+  Transições:
+    - SUSPECT -> CONFIRMED: frames >= min_frames E avg_score >= threshold
+    - CONFIRMED -> SUSPECT: miss_counter > grace_period
+    - * -> DELETED: timeout sem detecções associadas
+
+ONDE INSERIR MACHINE LEARNING (SUGESTÕES):
+------------------------------------------
+
+1. DETECÇÃO (Substituir segmentação de cor):
+   Método: Object Detection CNN (ex: YOLOv8, Faster R-CNN)
+   Benefícios:
+     - Robusto a variações de iluminação e cor
+     - Detecta cones parcialmente ocluídos
+     - Aprende features discriminativas
+   Implementação sugerida:
+     - Coletar dataset de cones anotados (bbox + classe)
+     - Treinar YOLOv8-nano (rápido, eficiente)
+     - Substituir detector.detect() por inferência do modelo
+     - Manter tracker inalterado
+
+2. CLASSIFICAÇÃO (Refinar detecções):
+   Método: CNN de classificação binária (cone vs não-cone)
+   Benefícios:
+     - Reduzir falsos positivos
+     - Validação adicional após detector
+   Implementação sugerida:
+     - Extrair crops de detecções candidatas
+     - Passar por rede classificadora (MobileNetV2, EfficientNet-Lite)
+     - Filtrar detecções com baixa probabilidade
+
+3. TRACKING (Substituir greedy + EMA):
+   Método: DeepSORT (Deep Learning + SORT)
+   Benefícios:
+     - Re-identificação de cones após oclusão
+     - Features visuais profundas para associação
+     - Melhor em ambientes densos
+   Implementação sugerida:
+     - Usar detector atual ou CNN
+     - Adicionar rede de extração de features (ResNet, MobileNet)
+     - Implementar DeepSORT tracker
+
+4. PREDIÇÃO DE TRAJETÓRIA:
+   Método: LSTM ou Transformer para predição de movimento
+   Benefícios:
+     - Prever posição futura de cones
+     - Melhorar associação em oclusões
+     - Detectar anomalias (cones movendo inesperadamente)
+
+ALGORITMOS COMPLEMENTARES (NÃO IMPLEMENTADOS):
+----------------------------------------------
+
+1. KALMAN FILTER:
+   - Predição de estado (posição, velocidade)
+   - Correção baseada em medições
+   - Útil para rastreamento sob oclusão
+
+2. HUNGARIAN ALGORITHM:
+   - Associação ótima global
+   - scipy.optimize.linear_sum_assignment
+   - Substituir _associate_greedy()
+
+3. NON-MAXIMUM SUPPRESSION (NMS):
+   - Eliminar detecções duplicadas (overlapping)
+   - Útil se detector gerar múltiplas detecções por cone
+
+4. OPTICAL FLOW:
+   - Rastreamento baseado em movimento de pixels
+   - Complementar ao tracking por detecção
+
+================================================================================
+PIPELINE DE DADOS E TREINO (MACHINE LEARNING)
+================================================================================
+
+STATUS ATUAL:
+-------------
+NÃO EXISTE pipeline de treino. Sistema atual é 100% baseado em regras (handcrafted).
+
+CRIANDO PIPELINE DE TREINO (PROPOSTA):
+--------------------------------------
+
+OBJETIVO: Treinar modelo de detecção de cones usando YOLOv8
+
+FASE 1: COLETA DE DADOS
+  1.1. Captura de vídeos/imagens:
+       - Gravar vídeos em diferentes condições:
+         + Iluminação: sol, nublado, sombra, noite
+         + Cenários: pista aberta, ambiente urbano, indoor
+         + Distâncias: cones perto (grande) e longe (pequeno)
+       - Comando: usar output_video_path para salvar vídeos
+  
+  1.2. Amostragem de frames:
+       - Extrair frames em intervalos regulares (ex: 1 a cada 10 frames)
+       - Evitar frames muito similares (redundância)
+       - Comando:
+         ```bash
+         ffmpeg -i video.mp4 -vf "select=not(mod(n\,10))" -vsync vfr frames/frame_%04d.jpg
+         ```
+  
+  1.3. Diversidade:
+       - Mínimo 500 imagens
+       - Balancear classes (se detectar outros objetos)
+       - Incluir casos difíceis (oclusão, iluminação extrema)
+
+FASE 2: ANOTAÇÃO
+  2.1. Ferramenta de anotação:
+       - Recomendado: LabelImg, CVAT, Label Studio
+       - Formato: YOLO txt ou COCO JSON
+  
+  2.2. Processo:
+       - Desenhar bounding boxes em TODOS os cones visíveis
+       - Incluir cones parcialmente visíveis (≥30% visível)
+       - Não anotar cones muito pequenos (<10x10 pixels)
+  
+  2.3. Qualidade:
+       - Bbox deve cobrir todo o cone com margem mínima
+       - Consistência entre anotadores (se múltiplos)
+       - Validação cruzada (re-anotar 10% das imagens)
+
+FASE 3: PREPARAÇÃO DE DATASET
+  3.1. Divisão:
+       - Treino: 70% (350 imagens)
+       - Validação: 20% (100 imagens)
+       - Teste: 10% (50 imagens)
+  
+  3.2. Estrutura de diretórios:
+       ```
+       dataset/
+         ├── images/
+         │   ├── train/
+         │   ├── val/
+         │   └── test/
+         └── labels/
+             ├── train/
+             ├── val/
+             └── test/
+       ```
+  
+  3.3. Arquivo de configuração (data.yaml):
+       ```yaml
+       train: ../dataset/images/train
+       val: ../dataset/images/val
+       test: ../dataset/images/test
+       
+       nc: 1  # número de classes
+       names: ['cone']
+       ```
+
+FASE 4: TREINO
+  4.1. Instalar YOLOv8:
+       ```bash
+       pip install ultralytics
+       ```
+  
+  4.2. Script de treino:
+       ```python
+       from ultralytics import YOLO
+       
+       # Carregar modelo pré-treinado
+       model = YOLO('yolov8n.pt')  # nano (mais rápido)
+       
+       # Treinar
+       results = model.train(
+           data='data.yaml',
+           epochs=100,
+           imgsz=640,
+           batch=16,
+           device=0,  # GPU 0 ou 'cpu'
+           patience=20,  # early stopping
+           save=True,
+           project='cone_detection',
+           name='yolov8n_cone'
+       )
+       ```
+  
+  4.3. Hiperparâmetros recomendados:
+       - epochs: 100-200 (parar se não melhorar por 20 epochs)
+       - imgsz: 640 (ou 416 para mais velocidade)
+       - batch: 16 (ajustar conforme memória GPU)
+       - lr0: 0.01 (learning rate inicial)
+       - augment: True (flips, crops, color jitter)
+
+FASE 5: VALIDAÇÃO
+  5.1. Métricas:
+       - mAP@0.5: Precisão média @ IoU 0.5
+       - mAP@0.5:0.95: Precisão média @ IoU 0.5 a 0.95
+       - Precision: TP / (TP + FP)
+       - Recall: TP / (TP + FN)
+  
+  5.2. Análise de erros:
+       - Visualizar predições em set de validação
+       - Identificar padrões de falhas (ex: cones pequenos, oclusão)
+       - Coletar mais dados para casos difíceis
+  
+  5.3. Comando de validação:
+       ```python
+       metrics = model.val(data='data.yaml', split='test')
+       print(f"mAP@0.5: {metrics.box.map50}")
+       ```
+
+FASE 6: EXPORTAÇÃO E INTEGRAÇÃO
+  6.1. Exportar para formato otimizado:
+       ```python
+       # ONNX (cross-platform)
+       model.export(format='onnx', dynamic=True, simplify=True)
+       
+       # TensorRT (NVIDIA GPU, mais rápido)
+       model.export(format='engine', device=0)
+       ```
+  
+  6.2. Integrar no detector.py:
+       ```python
+       class CNNDetector:
+           def __init__(self, model_path):
+               from ultralytics import YOLO
+               self.model = YOLO(model_path)
+           
+           def detect(self, frame):
+               results = self.model.predict(frame, conf=0.25, iou=0.45)
+               detections = []
+               for r in results[0].boxes:
+                   bbox = r.xyxy[0].cpu().numpy()  # x1,y1,x2,y2
+                   conf = float(r.conf)
+                   # Converter para (x,y,w,h)
+                   x, y, x2, y2 = bbox
+                   detections.append(((int(x), int(y), int(x2-x), int(y2-y)), conf, {}))
+               return detections, None, []
+       ```
+
+REPOSITÓRIO ESTRUTURADO (PROPOSTA):
+-----------------------------------
+```
+Trekking-DragonBotZv2/
+├── cone_tracker/          # Código atual
+├── dataset/               # NOVO: Dados de treino
+│   ├── raw_videos/
+│   ├── images/
+│   └── labels/
+├── models/                # NOVO: Modelos treinados
+│   ├── yolov8n_cone.pt
+│   ├── yolov8n_cone.onnx
+│   └── training_logs/
+├── scripts/               # NOVO: Scripts de treino
+│   ├── train_yolo.py
+│   ├── export_model.py
+│   └── evaluate.py
+├── tests/                 # Testes existentes
+└── configs/               # NOVO: Configs de treino
+    └── data.yaml
+```
+
+REPRODUTIBILIDADE:
+-----------------
+Para garantir experimentos reproduzíveis:
+  1. Fixar seeds: random.seed(), np.random.seed(), torch.manual_seed()
+  2. Versionar código (git tags para cada experimento)
+  3. Logar hiperparâmetros (MLflow, Weights & Biases)
+  4. Salvar checkpoints regularmente
+  5. Documentar ambiente (requirements.txt, conda env export)
+
+================================================================================
+AVALIAÇÃO E MÉTRICAS
+================================================================================
+
+COMO MEDIR DESEMPENHO DO SISTEMA ATUAL:
+---------------------------------------
+
+MÉTRICA 1: DETECÇÃO (Por Frame)
+  - True Positives (TP): Cones detectados corretamente
+  - False Positives (FP): Não-cones detectados como cones
+  - False Negatives (FN): Cones não detectados
+  
+  Métricas derivadas:
+    - Precision = TP / (TP + FP)  # Quantas detecções são corretas
+    - Recall = TP / (TP + FN)     # Quantos cones foram detectados
+    - F1-Score = 2 * (Precision * Recall) / (Precision + Recall)
+
+MÉTRICA 2: TRACKING (Por Vídeo)
+  - MOTA (Multiple Object Tracking Accuracy):
+    MOTA = 1 - (FN + FP + IDSW) / GT
+    Onde: IDSW = ID switches, GT = ground truth objects
+  
+  - MOTP (Multiple Object Tracking Precision):
+    MOTP = Σ(distâncias) / TP
+    Mede precisão de localização
+  
+  - IDF1 (ID F1 Score):
+    Mede consistência de IDs ao longo do tempo
+
+MÉTRICA 3: LATÊNCIA
+  - Tempo de processamento por frame (ms)
+  - FPS (frames per second)
+  - Jitter (variação de latência)
+
+MÉTRICA 4: ROBUSTEZ
+  - Taxa de sucesso em diferentes condições:
+    + Sol direto vs nublado vs sombra
+    + Cones perto vs longe
+    + Cones estáticos vs em movimento
+    + Câmera parada vs em movimento
+
+SCRIPTS SUGERIDOS PARA AVALIAÇÃO:
+---------------------------------
+
+Script 1: evaluate_detection.py
+```python
+#!/usr/bin/env python3
+"""
+Avalia detecção em vídeo anotado.
+Uso: python evaluate_detection.py --video input.mp4 --annotations annotations.json
+"""
+import json
+import cv2
+from cone_tracker import ConeDetector, load_config
+
+def load_annotations(path):
+    """Carrega anotações no formato COCO JSON."""
+    with open(path) as f:
+        return json.load(f)
+
+def calculate_iou(box1, box2):
+    """Calcula IoU entre dois boxes."""
+    x1, y1, w1, h1 = box1
+    x2, y2, w2, h2 = box2
+    
+    xi1, yi1 = max(x1, x2), max(y1, y2)
+    xi2, yi2 = min(x1+w1, x2+w2), min(y1+h1, y2+h2)
+    
+    inter_area = max(0, xi2-xi1) * max(0, yi2-yi1)
+    box1_area, box2_area = w1*h1, w2*h2
+    union_area = box1_area + box2_area - inter_area
+    
+    return inter_area / (union_area + 1e-6)
+
+def evaluate(video_path, annotations_path, iou_threshold=0.5):
+    annotations = load_annotations(annotations_path)
+    config = load_config()
+    detector = ConeDetector(config)
+    
+    cap = cv2.VideoCapture(video_path)
+    frame_idx = 0
+    tp, fp, fn = 0, 0, 0
+    
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        # Detecções
+        proc = cv2.resize(frame, (960, 540))
+        detections, _, _ = detector.detect(proc)
+        det_boxes = [d[0] for d in detections]
+        
+        # Ground truth
+        gt_boxes = annotations.get(str(frame_idx), [])
+        
+        # Matching
+        matched_gt = set()
+        for det_box in det_boxes:
+            best_iou = 0
+            best_gt_idx = -1
+            for i, gt_box in enumerate(gt_boxes):
+                iou = calculate_iou(det_box, gt_box)
+                if iou > best_iou:
+                    best_iou = iou
+                    best_gt_idx = i
+            
+            if best_iou >= iou_threshold and best_gt_idx not in matched_gt:
+                tp += 1
+                matched_gt.add(best_gt_idx)
+            else:
+                fp += 1
+        
+        fn += len(gt_boxes) - len(matched_gt)
+        frame_idx += 1
+    
+    cap.release()
+    
+    precision = tp / (tp + fp + 1e-6)
+    recall = tp / (tp + fn + 1e-6)
+    f1 = 2 * precision * recall / (precision + recall + 1e-6)
+    
+    print(f"Precision: {precision:.3f}")
+    print(f"Recall: {recall:.3f}")
+    print(f"F1-Score: {f1:.3f}")
+    print(f"TP: {tp}, FP: {fp}, FN: {fn}")
+```
+
+Script 2: benchmark_fps.py
+```python
+#!/usr/bin/env python3
+"""
+Mede FPS médio do sistema.
+Uso: python benchmark_fps.py --video input.mp4 --frames 300
+"""
+import time
+import cv2
+from cone_tracker import App
+
+def benchmark(video_path, num_frames=300):
+    import cone_tracker.config as cfg
+    config = cfg.load_config()
+    config['camera']['video_path'] = video_path
+    config['debug']['show_windows'] = False
+    
+    from cone_tracker import ConeDetector, MultiConeTracker
+    detector = ConeDetector(config)
+    tracker = MultiConeTracker(config)
+    
+    cap = cv2.VideoCapture(video_path)
+    
+    times = []
+    for i in range(num_frames):
+        ret, frame = cap.read()
+        if not ret:
+            break
+        
+        proc = cv2.resize(frame, (960, 540))
+        
+        t0 = time.time()
+        detections, _, _ = detector.detect(proc)
+        tracker.update(detections)
+        t1 = time.time()
+        
+        times.append(t1 - t0)
+    
+    cap.release()
+    
+    import numpy as np
+    avg_time = np.mean(times)
+    std_time = np.std(times)
+    fps = 1.0 / avg_time
+    
+    print(f"Frames processados: {len(times)}")
+    print(f"Tempo médio: {avg_time*1000:.2f} ms")
+    print(f"Desvio padrão: {std_time*1000:.2f} ms")
+    print(f"FPS médio: {fps:.1f}")
+    print(f"FPS mínimo: {1.0/max(times):.1f}")
+    print(f"FPS máximo: {1.0/min(times):.1f}")
+```
+
+COMANDOS DE EXECUÇÃO:
+--------------------
+```bash
+# Avaliar detecção
+python scripts/evaluate_detection.py \
+  --video test_videos/pista1.mp4 \
+  --annotations test_videos/pista1_annotations.json \
+  --iou-threshold 0.5
+
+# Benchmark de performance
+python scripts/benchmark_fps.py \
+  --video test_videos/pista1.mp4 \
+  --frames 300
+
+# Comparar configurações
+python scripts/compare_configs.py \
+  --video test_videos/pista1.mp4 \
+  --configs config1.yaml config2.yaml config3.yaml
+```
+
+
+================================================================================
+TESTES E VALIDAÇÃO
+================================================================================
+
+ESTRUTURA DE TESTES EXISTENTE:
+------------------------------
+
+O repositório possui testes em /tests/:
+  - test_debug_features.py: Testes de features de debug (11019 bytes)
+  - test_integration.py: Testes de integração (4389 bytes)
+  - test_streamlit_formatting.py: Testes de formatação (2571 bytes)
+  - test_video_input.py: Testes de entrada de vídeo (5541 bytes)
+  - test_video_output.py: Testes de saída de vídeo (9193 bytes)
+
+TESTES UNITÁRIOS RECOMENDADOS (POR SCRIPT):
+-------------------------------------------
+
+MÓDULO: cone_tracker/detector.py
+  Testes necessários:
+    1. test_preprocess():
+       - Verificar que retorna HSV
+       - Verificar dimensões corretas
+       - Verificar aplicação de CLAHE no canal V
+    
+    2. test_get_mask():
+       - Verificar combinação de máscaras via OR
+       - Testar cada máscara individualmente
+       - Verificar morfologia aplicada
+    
+    3. test_part_boxes():
+       - Testar com máscara vazia (retorna [])
+       - Testar com contornos pequenos (filtrados)
+       - Verificar ordenação por y
+    
+    4. test_build_groups():
+       - Testar agrupamento de partes verticalmente alinhadas
+       - Testar casos de partes isoladas
+       - Testar múltiplos grupos
+    
+    5. test_profile_score():
+       - Verificar score para forma cônica (alto)
+       - Verificar score para forma retangular (baixo)
+       - Testar casos edge (bbox muito pequeno)
+    
+    6. test_detect():
+       - Testar frame com cones conhecidos
+       - Verificar formato de retorno (detections, mask, rejects)
+       - Verificar ordenação por score
+
+MÓDULO: cone_tracker/tracker.py
+  Testes necessários:
+    1. test_track_init():
+       - Verificar inicialização de Track
+       - Verificar bbox(), avg_score(), frames_seen
+    
+    2. test_track_update():
+       - Verificar suavização EMA
+       - Verificar atualização de timestamps
+       - Verificar adição ao histórico
+    
+    3. test_associate_greedy():
+       - Testar associação perfeita (1-1)
+       - Testar com detecções não associadas
+       - Testar com tracks não associados
+       - Verificar que menor distância é escolhida
+    
+    4. test_tracker_update():
+       - Testar criação de novos tracks
+       - Testar atualização de tracks existentes
+       - Testar deleção por timeout
+       - Testar transição SUSPECT -> CONFIRMED
+       - Testar grace period
+    
+    5. test_confirmed_tracks():
+       - Verificar filtragem por estado CONFIRMED
+
+MÓDULO: cone_tracker/utils.py
+  Testes necessários:
+    1. test_clamp():
+       - Casos: valor dentro, abaixo, acima do range
+    
+    2. test_safe_roi():
+       - Testar ROI completamente dentro da imagem
+       - Testar ROI parcialmente fora
+       - Testar ROI completamente fora
+    
+    3. test_bbox_operations():
+       - test_x_overlap_ratio(): vários níveis de overlap
+       - test_bbox_union(): múltiplos boxes
+       - test_bbox_center(): cálculo correto
+       - test_bbox_distance(): distância euclidiana
+
+MÓDULO: cone_tracker/color_utils.py
+  Testes necessários:
+    1. test_gray_world():
+       - Verificar normalização de imagem com cast de cor
+       - Verificar range de saída [0, 255]
+    
+    2. test_rg_chromaticity_mask():
+       - Testar com pixel laranja (deve ativar)
+       - Testar com pixel azul (não deve ativar)
+    
+    3. test_backproj():
+       - Testar carregamento de histograma
+       - Testar geração de máscara
+
+MÓDULO: cone_tracker/config.py
+  Testes necessários:
+    1. test_deep_merge():
+       - Testar merge de dicts nested
+       - Verificar precedência de override
+    
+    2. test_load_config():
+       - Testar com arquivo inexistente (retorna default)
+       - Testar com YAML inválido (retorna default)
+       - Testar com YAML parcial (merge com default)
+    
+    3. test_watch_config():
+       - Testar detecção de mudanças em arquivo
+
+MÓDULO: cone_tracker/visualizer.py
+  Testes necessários:
+    1. test_color_rotation():
+       - Verificar rotação de cores por ID
+    
+    2. test_draw():
+       - Verificar que frame é modificado
+       - Verificar presença de elementos (FPS, tracks, rejects)
+
+MÓDULO: cone_tracker/app.py
+  Testes necessários:
+    1. test_reload_config():
+       - Verificar reinicialização de componentes
+    
+    2. test_debug_print_heading():
+       - Verificar cálculo de ângulos
+       - Verificar estimativa de distância
+
+TESTES DE INTEGRAÇÃO RECOMENDADOS:
+----------------------------------
+
+1. test_end_to_end_video():
+   - Processar vídeo completo
+   - Verificar que não crashou
+   - Verificar número de frames processados
+
+2. test_hot_reload():
+   - Modificar config durante execução
+   - Verificar que recarregou
+
+3. test_headless_mode():
+   - Executar com show_windows=false
+   - Verificar que salvou vídeo de saída
+
+4. test_multiple_cones():
+   - Vídeo com 3-5 cones
+   - Verificar tracking de múltiplos objetos
+
+EXEMPLO DE TESTE UNITÁRIO:
+--------------------------
+```python
+# tests/test_detector_unit.py
+import numpy as np
+import pytest
+from cone_tracker import ConeDetector, load_config
+
+def test_preprocess_returns_hsv():
+    config = load_config()
+    detector = ConeDetector(config)
+    
+    # Criar imagem BGR fake
+    bgr = np.random.randint(0, 255, (480, 640, 3), dtype=np.uint8)
+    
+    # Processar
+    hsv = detector.preprocess(bgr)
+    
+    # Verificações
+    assert hsv.shape == bgr.shape
+    assert hsv.dtype == np.uint8
+    # H deve estar em [0, 180)
+    assert hsv[:,:,0].max() < 180
+
+def test_profile_score_cone_shape():
+    config = load_config()
+    detector = ConeDetector(config)
+    
+    # Criar máscara simulando cone (largo embaixo, estreito em cima)
+    mask = np.zeros((100, 100), dtype=np.uint8)
+    for y in range(100):
+        width = int(10 + (y / 100.0) * 40)  # Cresce de 10 a 50
+        x_start = 50 - width // 2
+        mask[y, x_start:x_start+width] = 255
+    
+    bbox = (0, 0, 100, 100)
+    score = detector._profile_score(mask, bbox)
+    
+    # Score deve ser alto (> 0.6) para forma cônica
+    assert score > 0.6
+
+def test_profile_score_rectangle_shape():
+    config = load_config()
+    detector = ConeDetector(config)
+    
+    # Criar máscara retangular (largura constante)
+    mask = np.zeros((100, 100), dtype=np.uint8)
+    mask[10:90, 30:70] = 255
+    
+    bbox = (0, 0, 100, 100)
+    score = detector._profile_score(mask, bbox)
+    
+    # Score deve ser baixo (< 0.4) para retângulo
+    assert score < 0.4
+```
+
+EXECUTAR TESTES:
+---------------
+```bash
+# Todos os testes
+pytest tests/
+
+# Teste específico
+pytest tests/test_detector_unit.py::test_profile_score_cone_shape
+
+# Com cobertura
+pytest tests/ --cov=cone_tracker --cov-report=html
+
+# Com verbose
+pytest tests/ -v
+```
+
+================================================================================
+IMPLANTAÇÃO E INTEGRAÇÃO
+================================================================================
+
+INTEGRAÇÃO COM NAVEGAÇÃO/AUTONOMIA:
+-----------------------------------
+
+INTERFACE 1: Logs HEADING_DBG (stdout)
+  Formato: Texto parseável
+  Exemplo:
+    "HEADING_DBG: detected=True id=2 cx=520.5 err_px=+40.5 err_deg=+3.12 bbox_h=85 est_dist=2.45m avg_score=0.68"
+  
+  Parser Python:
+    ```python
+    import re
+    
+    def parse_heading_log(line):
+        if "detected=False" in line:
+            return None
+        
+        pattern = r"id=(\d+) cx=([\d.]+) err_px=([-+\d.]+) err_deg=([-+\d.]+) bbox_h=(\d+)(?: est_dist=([\d.]+)m)? avg_score=([\d.]+)"
+        match = re.search(pattern, line)
+        if match:
+            return {
+                'id': int(match.group(1)),
+                'cx': float(match.group(2)),
+                'err_px': float(match.group(3)),
+                'err_deg': float(match.group(4)),
+                'bbox_h': int(match.group(5)),
+                'est_dist': float(match.group(6)) if match.group(6) else None,
+                'avg_score': float(match.group(7))
+            }
+        return None
+    ```
+  
+  Uso em navegação:
+    ```python
+    # Subprocess para executar cone tracker
+    import subprocess
+    
+    proc = subprocess.Popen(
+        ['python3', 'test7.py'],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True
+    )
+    
+    for line in proc.stdout:
+        if "HEADING_DBG" in line:
+            data = parse_heading_log(line)
+            if data:
+                # Enviar comando de steering
+                steering_angle = -data['err_deg']  # Inverter para correção
+                send_steering_command(steering_angle)
+    ```
+
+INTERFACE 2: ROS Node (NÃO IMPLEMENTADO - PROPOSTA)
+  Criar nó ROS que publica detecções:
+    ```python
+    # cone_tracker_ros_node.py
+    import rospy
+    from geometry_msgs.msg import PoseArray, Pose
+    from cone_tracker import App, load_config
+    
+    class ConeTrackerNode:
+        def __init__(self):
+            rospy.init_node('cone_tracker')
+            self.pub = rospy.Publisher('/cone_detections', PoseArray, queue_size=10)
+            self.config = load_config()
+            # Modificar App para callback em vez de loop
+        
+        def publish_detections(self, tracks):
+            msg = PoseArray()
+            msg.header.stamp = rospy.Time.now()
+            msg.header.frame_id = "camera_link"
+            
+            for track in tracks:
+                pose = Pose()
+                # Converter cx, cy para coordenadas mundo (requer calibração)
+                pose.position.x = estimate_x(track)
+                pose.position.y = estimate_y(track)
+                pose.position.z = 0.0
+                msg.poses.append(pose)
+            
+            self.pub.publish(msg)
+    ```
+
+INTERFACE 3: API REST (NÃO IMPLEMENTADO - PROPOSTA)
+  Servidor Flask para consumo remoto:
+    ```python
+    # cone_tracker_api.py
+    from flask import Flask, jsonify, request
+    import cv2
+    import base64
+    from cone_tracker import ConeDetector, MultiConeTracker, load_config
+    
+    app = Flask(__name__)
+    config = load_config()
+    detector = ConeDetector(config)
+    tracker = MultiConeTracker(config)
+    
+    @app.route('/detect', methods=['POST'])
+    def detect():
+        # Receber imagem base64
+        img_data = request.json['image']
+        img_bytes = base64.b64decode(img_data)
+        img_array = np.frombuffer(img_bytes, dtype=np.uint8)
+        frame = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+        
+        # Processar
+        detections, _, _ = detector.detect(frame)
+        tracker.update(detections)
+        tracks = tracker.confirmed_tracks()
+        
+        # Retornar JSON
+        result = {
+            'tracks': [
+                {
+                    'id': t.track_id,
+                    'bbox': t.bbox(),
+                    'score': t.avg_score()
+                }
+                for t in tracks
+            ]
+        }
+        return jsonify(result)
+    
+    if __name__ == '__main__':
+        app.run(host='0.0.0.0', port=5000)
+    ```
+
+REQUISITOS DE LATÊNCIA:
+-----------------------
+
+Aplicação em robô autônomo:
+  - Latência aceitável: < 100ms (10 FPS mínimo)
+  - Latência ideal: < 50ms (20+ FPS)
+  - Jitter: < 20ms
+
+Para cumprir requisitos:
+  1. Reduzir resolução (640x360 em vez de 960x540)
+  2. Desabilitar máscaras opcionais (Lab, RG, backproj)
+  3. Reduzir profile_slices para 6-8
+  4. Usar GPU se disponível (CUDA OpenCV)
+  5. Otimizar código Python (Cython, numba)
+
+OBSERVABILIDADE (PROPOSTA):
+---------------------------
+
+Logs estruturados:
+  ```python
+  import logging
+  import json
+  
+  logger = logging.getLogger(__name__)
+  
+  def log_tracking_event(event_type, data):
+      log_entry = {
+          'timestamp': time.time(),
+          'event': event_type,
+          'data': data
+      }
+      logger.info(json.dumps(log_entry))
+  
+  # Uso:
+  log_tracking_event('track_confirmed', {'id': 5, 'avg_score': 0.68})
+  log_tracking_event('track_deleted', {'id': 3, 'age': 2.5})
+  ```
+
+Métricas (Prometheus):
+  ```python
+  from prometheus_client import Counter, Histogram, Gauge
+  
+  detections_total = Counter('cone_detections_total', 'Total detections')
+  tracking_latency = Histogram('cone_tracking_latency_seconds', 'Processing latency')
+  active_tracks = Gauge('cone_active_tracks', 'Number of active tracks')
+  ```
+
+DEPLOYMENT EM PRODUÇÃO:
+-----------------------
+
+1. DOCKER:
+   ```dockerfile
+   # Dockerfile
+   FROM python:3.9-slim
+   
+   # Instalar dependências do sistema
+   RUN apt-get update && apt-get install -y \
+       libopencv-dev \
+       python3-opencv \
+       && rm -rf /var/lib/apt/lists/*
+   
+   WORKDIR /app
+   
+   # Instalar dependências Python
+   COPY requirements.txt .
+   RUN pip install --no-cache-dir -r requirements.txt
+   
+   # Copiar código
+   COPY cone_tracker/ ./cone_tracker/
+   COPY test7.py .
+   COPY cone_config.yaml .
+   
+   CMD ["python3", "test7.py"]
+   ```
+   
+   Executar:
+   ```bash
+   docker build -t cone-tracker .
+   docker run -v /dev/video0:/dev/video0 --device /dev/video0 cone-tracker
+   ```
+
+2. SYSTEMD SERVICE:
+   ```ini
+   # /etc/systemd/system/cone-tracker.service
+   [Unit]
+   Description=Cone Detection and Tracking Service
+   After=network.target
+   
+   [Service]
+   Type=simple
+   User=robot
+   WorkingDirectory=/home/robot/Trekking-DragonBotZv2
+   ExecStart=/usr/bin/python3 test7.py
+   Restart=always
+   RestartSec=5
+   
+   [Install]
+   WantedBy=multi-user.target
+   ```
+   
+   Ativar:
+   ```bash
+   sudo systemctl enable cone-tracker
+   sudo systemctl start cone-tracker
+   sudo systemctl status cone-tracker
+   ```
+
+3. EDGE DEVICE (Raspberry Pi, Jetson Nano):
+   Otimizações:
+     - Compilar OpenCV com otimizações ARM/CUDA
+     - Usar modelo leve (YOLOv8-nano, MobileNet)
+     - Reduzir resolução (640x360 ou menos)
+     - Desabilitar visualização (headless)
+     - Overclock se necessário
+
+================================================================================
+RISCOS E MITIGAÇÃO
+================================================================================
+
+RISCOS POR SCRIPT/COMPONENTE:
+-----------------------------
+
+DETECTOR (detector.py):
+  Risco 1: Falsos positivos em objetos laranjas não-cones
+    - Impacto: Alto (navegação incorreta)
+    - Probabilidade: Média
+    - Mitigação:
+      + Aumentar min_frame_score para 0.40-0.45
+      + Habilitar validação por profile_score rigoroso
+      + Adicionar classificador CNN secundário
+  
+  Risco 2: Falha em condições de baixa iluminação
+    - Impacto: Alto (cones não detectados)
+    - Probabilidade: Alta
+    - Mitigação:
+      + Habilitar gray_world e CLAHE
+      + Adicionar iluminação IR/LED na câmera
+      + Treinar modelo ML robusto a iluminação
+  
+  Risco 3: Cones parcialmente ocluídos não detectados
+    - Impacto: Médio
+    - Probabilidade: Alta
+    - Mitigação:
+      + Relaxar min_fill_ratio para 0.05
+      + Usar ML (YOLO) que lida melhor com oclusão
+      + Implementar tracking por predição (Kalman)
+
+TRACKER (tracker.py):
+  Risco 1: Tracks deletados prematuramente (lost_timeout curto)
+    - Impacto: Alto (perda de consistência)
+    - Probabilidade: Alta com config padrão (0.6s)
+    - Mitigação:
+      + Aumentar lost_timeout para 3.0s mínimo
+      + Usar grace_seconds em vez de grace_frames
+  
+  Risco 2: ID switches frequentes (associação falha)
+    - Impacto: Médio
+    - Probabilidade: Média em ambientes densos
+    - Mitigação:
+      + Aumentar association_max_distance
+      + Implementar Hungarian algorithm
+      + Usar DeepSORT com features visuais
+  
+  Risco 3: Limite de tracks atingido (max_tracks)
+    - Impacto: Médio (cones não rastreados)
+    - Probabilidade: Baixa (default 8 é razoável)
+    - Mitigação:
+      + Aumentar max_tracks se necessário
+      + Implementar priorização por score/proximidade
+
+APP (app.py):
+  Risco 1: Crash por falha de câmera
+    - Impacto: Alto (sistema para)
+    - Probabilidade: Média
+    - Mitigação:
+      + Try-catch em cap.read() já implementado
+      + Contador de falhas (max_fail) já implementado
+      + Adicionar auto-restart via systemd
+  
+  Risco 2: Overflow de disco em gravação contínua
+    - Impacto: Médio
+    - Probabilidade: Alta em uso prolongado
+    - Mitigação:
+      + Rotação de arquivos de vídeo (timestamp no nome)
+      + Limite de tamanho/idade de arquivos
+      + Compressão adequada (H.264 em vez de mp4v)
+  
+  Risco 3: HFOV incorreto (cálculo de ângulo errado)
+    - Impacto: Médio (estimativas incorretas)
+    - Probabilidade: Média se não calibrado
+    - Mitigação:
+      + Calibrar câmera (medir HFOV real)
+      + Validar estimativas com medições ground-truth
+      + Documentar procedimento de calibração
+
+CONFIG (config.py):
+  Risco 1: Config YAML malformado (falha ao parsear)
+    - Impacto: Baixo (usa defaults)
+    - Probabilidade: Baixa
+    - Mitigação:
+      + Try-catch já implementado
+      + Validação de schema (pydantic)
+      + Fornecer cone_config.yaml.example válido
+  
+  Risco 2: Valores inválidos (ex: lost_timeout negativo)
+    - Impacto: Alto (comportamento inesperado)
+    - Probabilidade: Média
+    - Mitigação:
+      + Validação de ranges ao carregar
+      + Asserts em valores críticos
+      + Documentação clara de ranges permitidos
+
+GERAL:
+  Risco 1: Memória insuficiente (leak ou uso excessivo)
+    - Impacto: Alto (crash)
+    - Probabilidade: Baixa
+    - Mitigação:
+      + Profiling de memória (memory_profiler)
+      + Limitar tamanho de históricos (deque com maxlen)
+      + Monitorar uso de memória em produção
+  
+  Risco 2: CPU/GPU insuficiente (latência alta)
+    - Impacto: Alto (não atende requisitos tempo real)
+    - Probabilidade: Média em hardware limitado
+    - Mitigação:
+      + Benchmark antes de deployment
+      + Otimizações (resolução, máscaras, slices)
+      + Hardware adequado (Jetson Nano, UP Board)
+
+================================================================================
+ROADMAP TÉCNICO - BACKLOG PRIORIZADO
+================================================================================
+
+ÉPICO 1: ROBUSTEZ E QUALIDADE DE DETECÇÃO
+-----------------------------------------
+
+US-1.1: Melhorar detecção em baixa iluminação
+  Prioridade: ALTA
+  Esforço: Médio (2-3 dias)
+  Descrição: Implementar técnicas de pré-processamento avançadas
+  Critérios de aceitação:
+    - Taxa de detecção > 80% em vídeos com iluminação < 100 lux
+    - Falsos positivos < 10% em mesma condição
+  Tarefas:
+    - [ ] Implementar normalização Retinex
+    - [ ] Ajustar parâmetros CLAHE (clip_limit, tile_size)
+    - [ ] Testar com dataset de baixa iluminação
+    - [ ] Validar com métricas (precision, recall)
+
+US-1.2: Reduzir falsos positivos
+  Prioridade: ALTA
+  Esforço: Médio (2-3 dias)
+  Descrição: Ajustar thresholds e adicionar validações
+  Critérios de aceitação:
+    - Precision > 90% em vídeos de teste
+    - Recall mantém > 85%
+  Tarefas:
+    - [ ] Coletar dataset de falsos positivos
+    - [ ] Análise de características (área, aspect, fill, profile)
+    - [ ] Ajustar thresholds (min_frame_score, confirm_avg_score)
+    - [ ] Implementar validação adicional (contorno complexo, simetria)
+
+US-1.3: Suporte a cones parcialmente ocluídos
+  Prioridade: MÉDIA
+  Esforço: Alto (1 semana)
+  Descrição: Detectar cones com oclusão parcial (30-50% visível)
+  Critérios de aceitação:
+    - Recall > 70% para cones 30-50% ocluídos
+    - Não degradar detecção de cones totalmente visíveis
+  Tarefas:
+    - [ ] Relaxar fill_ratio mínimo
+    - [ ] Ajustar algoritmo de agrupamento
+    - [ ] Ou: treinar modelo YOLO (preferível)
+    - [ ] Validar com dataset de oclusões
+
+ÉPICO 2: TRACKING E ESTABILIDADE
+--------------------------------
+
+US-2.1: Corrigir timeout prematuro de tracks
+  Prioridade: CRÍTICA
+  Esforço: Baixo (1 dia)
+  Descrição: Aumentar lost_timeout para evitar deleção prematura
+  Critérios de aceitação:
+    - Tracks sobrevivem >= 90 frames sem detecção (3s @ 30fps)
+    - Taxa de confirmação > 80% de tracks válidos
+  Tarefas:
+    - [ ] Atualizar DEFAULT_CONFIG lost_timeout: 3.0
+    - [ ] Atualizar cone_config.yaml.example  
+    - [ ] Testar com vídeos problemáticos
+    - [ ] Validar taxa de confirmação
+
+US-2.2: Implementar predição de movimento (Kalman Filter)
+  Prioridade: MÉDIA
+  Esforço: Alto (1 semana)
+  Descrição: Adicionar Kalman Filter para predizer posição em oclusões
+  Critérios de aceitação:
+    - Associação correta > 90% mesmo com gaps de 10 frames
+    - Não aumentar latência > 5ms
+  Tarefas:
+    - [ ] Implementar classe KalmanFilterTracker
+    - [ ] Integrar com Track (substituir EMA simples)
+    - [ ] Testar com vídeos de oclusão
+    - [ ] Benchmark de performance
+
+US-2.3: Melhorar associação (Hungarian Algorithm)
+  Prioridade: BAIXA
+  Esforço: Médio (2-3 dias)
+  Descrição: Substituir greedy por Hungarian para associação ótima
+  Critérios de aceitação:
+    - ID switches reduzidos em 50%
+    - MOTA > 85% em vídeos de teste
+  Tarefas:
+    - [ ] Implementar Hungarian via scipy.optimize.linear_sum_assignment
+    - [ ] Substituir _associate_greedy()
+    - [ ] Comparar métricas (MOTA, IDF1) antes/depois
+    - [ ] Benchmark de latência
+
+ÉPICO 3: MACHINE LEARNING E MODERNIZAÇÃO
+----------------------------------------
+
+US-3.1: Treinar modelo YOLOv8 para detecção
+  Prioridade: ALTA
+  Esforço: Alto (2 semanas)
+  Descrição: Substituir detector baseado em cor por CNN
+  Critérios de aceitação:
+    - mAP@0.5 > 0.85 em dataset de validação
+    - Latência < 50ms em hardware target (Jetson Nano)
+    - Precision > 90%, Recall > 85%
+  Tarefas:
+    - [ ] Coletar e anotar dataset (500+ imagens)
+    - [ ] Dividir train/val/test (70/20/10)
+    - [ ] Treinar YOLOv8-nano (100 epochs)
+    - [ ] Avaliar métricas e refinar
+    - [ ] Exportar para ONNX/TensorRT
+    - [ ] Integrar no detector.py
+
+US-3.2: Implementar DeepSORT
+  Prioridade: MÉDIA
+  Esforço: Alto (1 semana)
+  Descrição: Adicionar features visuais profundas para tracking
+  Critérios de aceitação:
+    - Re-identificação correta > 80% após oclusão
+    - IDF1 > 0.80 em vídeos de teste
+  Tarefas:
+    - [ ] Treinar rede de extração de features (ResNet18)
+    - [ ] Implementar DeepSORT tracker
+    - [ ] Substituir MultiConeTracker
+    - [ ] Validar métricas
+
+ÉPICO 4: OBSERVABILIDADE E OPS
+------------------------------
+
+US-4.1: Logs estruturados e métricas
+  Prioridade: MÉDIA
+  Esforço: Baixo (1-2 dias)
+  Descrição: Adicionar logging JSON e métricas Prometheus
+  Critérios de aceitação:
+    - Logs em formato JSON parseável
+    - Métricas exportadas em /metrics (Prometheus)
+  Tarefas:
+    - [ ] Migrar logging para structlog ou python-json-logger
+    - [ ] Implementar métricas (prometheus_client)
+    - [ ] Dashboard Grafana
+
+US-4.2: Health check e auto-recovery
+  Prioridade: MÉDIA
+  Esforço: Médio (2 dias)
+  Descrição: Endpoint de health e restart automático
+  Critérios de aceitação:
+    - Endpoint /health retorna status (se API REST)
+    - Systemd reinicia automaticamente em crash
+  Tarefas:
+    - [ ] Implementar health check
+    - [ ] Configurar systemd service com Restart=always
+    - [ ] Testar cenários de falha
+
+US-4.3: Testes automatizados e CI/CD
+  Prioridade: ALTA
+  Esforço: Médio (3 dias)
+  Descrição: Pipeline de testes e deployment
+  Critérios de aceitação:
+    - Cobertura de testes > 70%
+    - CI roda testes em cada PR
+    - CD faz deploy automático em merge
+  Tarefas:
+    - [ ] Implementar testes unitários (pytest)
+    - [ ] Setup GitHub Actions CI
+    - [ ] Setup CD (Docker build + deploy)
+
+ÉPICO 5: INTEGRAÇÕES E INTERFACES
+---------------------------------
+
+US-5.1: API REST para integração externa
+  Prioridade: MÉDIA
+  Esforço: Médio (2-3 dias)
+  Descrição: Servidor Flask/FastAPI para consumo remoto
+  Critérios de aceitação:
+    - Endpoint POST /detect recebe imagem e retorna tracks
+    - Latência < 100ms (incluindo rede)
+    - Documentação OpenAPI
+  Tarefas:
+    - [ ] Implementar API com FastAPI
+    - [ ] Endpoints: /detect, /health, /config
+    - [ ] Documentação Swagger
+    - [ ] Testes de carga
+
+US-5.2: Nó ROS para integração com stack autônomo
+  Prioridade: ALTA (se usar ROS)
+  Esforço: Médio (2-3 dias)
+  Descrição: Publicar detecções como mensagens ROS
+  Critérios de aceitação:
+    - Publica em /cone_detections (PoseArray)
+    - Latência < 50ms
+    - Compatível com ROS Noetic/Humble
+  Tarefas:
+    - [ ] Implementar cone_tracker_ros_node.py
+    - [ ] Definir mensagem customizada (se necessário)
+    - [ ] Integrar com tf2 (transformações)
+    - [ ] Documentação de uso
+
+US-5.3: Interface web de monitoramento
+  Prioridade: BAIXA
+  Esforço: Alto (1 semana)
+  Descrição: Dashboard web para visualizar tracking em tempo real
+  Critérios de aceitação:
+    - Stream de vídeo com overlays
+    - Gráficos de métricas (FPS, tracks, etc.)
+    - Controle de parâmetros (config)
+  Tarefas:
+    - [ ] Backend WebSocket (Flask-SocketIO)
+    - [ ] Frontend (React ou Vue.js)
+    - [ ] Streaming de vídeo (MJPEG ou WebRTC)
+    - [ ] UI de controle de config
+
+ÉPICO 6: DOCUMENTAÇÃO E USABILIDADE
+-----------------------------------
+
+US-6.1: Documentação completa de uso
+  Prioridade: ALTA
+  Esforço: Médio (2 dias)
+  Descrição: README detalhado e guias de uso
+  Critérios de aceitação:
+    - Usuário novo consegue rodar sistema em < 30 min
+    - Documentação de todos os parâmetros de config
+    - Troubleshooting guide
+  Tarefas:
+    - [x] README.md completo (já existe, revisar)
+    - [ ] Guia de calibração de câmera
+    - [ ] FAQ e troubleshooting
+    - [ ] Exemplos de uso (notebooks)
+
+US-6.2: Ferramentas de tuning interativo
+  Prioridade: BAIXA
+  Esforço: Alto (1 semana)
+  Descrição: GUI para ajustar parâmetros em tempo real
+  Critérios de aceitação:
+    - Sliders para ajustar HSV ranges, thresholds, etc.
+    - Preview em tempo real
+    - Salvar config ajustado
+  Tarefas:
+    - [ ] Implementar GUI (tkinter ou Qt)
+    - [ ] Integrar com hot-reload
+    - [ ] Salvar snapshots de config
+
+PRIORIZAÇÃO GERAL (MVP vs NICE-TO-HAVE):
+----------------------------------------
+
+MUST HAVE (MVP):
+  1. US-2.1: Corrigir timeout prematuro (CRÍTICO)
+  2. US-1.2: Reduzir falsos positivos
+  3. US-1.1: Melhorar baixa iluminação
+  4. US-4.3: Testes automatizados
+  5. US-6.1: Documentação completa
+
+SHOULD HAVE (v2):
+  1. US-3.1: Treinar YOLOv8
+  2. US-5.2: Nó ROS (se aplicável)
+  3. US-2.2: Kalman Filter
+  4. US-4.1: Logs estruturados
+
+COULD HAVE (v3+):
+  1. US-3.2: DeepSORT
+  2. US-5.1: API REST
+  3. US-2.3: Hungarian Algorithm
+  4. US-5.3: Interface web
+
+WON'T HAVE (por agora):
+  1. US-6.2: Ferramentas de tuning GUI
+
+================================================================================
+FIM DO ROADMAP
+================================================================================
+
+Este documento fornece um mapeamento COMPLETO e EXTENSIVAMENTE DETALHADO de
+todas as funcionalidades relacionadas à detecção de cones no repositório
+narutojgdr-sudo/Trekking-DragonBotZv2.
+
+Para atualizações deste roadmap, regenerar com base no código atual usando:
+  1. Análise de mudanças em cone_tracker/*
+  2. Revisão de novos testes em tests/*
+  3. Atualização de métricas e benchmarks
+  4. Incorporação de feedback de produção
+
+Última atualização: 2026-01-15
+Versão do roadmap: 1.0
+Autor: narutojgdr-sudo (agent-generated)
+
