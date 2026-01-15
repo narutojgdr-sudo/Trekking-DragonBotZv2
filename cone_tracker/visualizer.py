@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Visualization for cone detection and tracking."""
+import math
 from typing import Any, Dict, List, Tuple
 
 import cv2
@@ -22,10 +23,58 @@ class Visualizer:
 
     def __init__(self, config: Dict[str, Any]):
         self.cfg = config["debug"]
+        self.camera_cfg = config["camera"]
 
     def _color(self, track_id: int) -> Tuple[int, int, int]:
         """Get color for track ID."""
         return self.COLORS[track_id % len(self.COLORS)]
+    
+    def _compute_heading_info(self, track: Track, frame_w: int) -> Tuple[str, float]:
+        """
+        Compute heading direction and angle for a track.
+        
+        Args:
+            track: Track object with cx (center x position)
+            frame_w: Frame width in pixels
+            
+        Returns:
+            Tuple of (direction_str, angle_deg) e.g. ("LEFT", -3.12)
+        """
+        # Get HFOV from config with fallback to 70 degrees
+        hfov_deg = self.camera_cfg.get("hfov_deg", 70.0)
+        
+        # Validate HFOV is in a reasonable range (10-170 degrees)
+        if hfov_deg < 10.0 or hfov_deg > 170.0:
+            hfov_deg = 70.0
+        
+        hfov_rad = math.radians(hfov_deg)
+        
+        # Compute focal length using pinhole model: focal = (width/2) / tan(hfov/2)
+        focal_px = (frame_w / 2.0) / math.tan(hfov_rad / 2.0)
+        
+        # Frame center
+        center_x = frame_w / 2.0
+        
+        # Calculate horizontal error
+        err_px = track.cx - center_x
+        
+        # Convert pixel error to angle using the horizontal field of view
+        # angle = arctan(opposite/adjacent) = arctan(err_px / focal_px)
+        angle_rad = math.atan(err_px / focal_px)
+        angle_deg = math.degrees(angle_rad)
+        
+        # Get deadband threshold
+        deadband_deg = self.cfg.get("heading_center_deadband_deg", 0.5)
+        
+        # Determine direction
+        if abs(angle_deg) < deadband_deg:
+            direction = "CENTER"
+        elif angle_deg > 0:
+            direction = "RIGHT"
+        else:
+            direction = "LEFT"
+        
+        return direction, angle_deg
 
     def draw(self, frame: np.ndarray, tracks: List[Track], rejects: List[Tuple[Tuple[int, int, int, int], str]], fps: float, config_reload_msg: str = None):
         """Draw tracking visualization on frame."""
@@ -60,15 +109,53 @@ class Visualizer:
 
             x, y, w, h = t.bbox()
             cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-            cv2.putText(
-                frame,
-                f"ID {t.track_id} {t.state.name} avg={t.avg_score():.2f}",
-                (x, max(0, y - 10)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.45,
-                color,
-                2,
-            )
+            
+            # For CONFIRMED tracks, optionally show heading overlay
+            if t.state == ConeState.CONFIRMED and self.cfg.get("show_heading_overlay", False):
+                # Compute heading info
+                direction, angle_deg = self._compute_heading_info(t, frame.shape[1])
+                
+                # Format heading text with sign
+                heading_text = f"{direction} {angle_deg:+.2f}°"
+                
+                # Position heading text above the existing label
+                # Use y-24 for heading line, y-10 for ID label
+                # Clamp to avoid negative y positions
+                heading_y = max(15, y - 24)
+                label_y = max(30, y - 10)
+                
+                # Draw heading line (first line)
+                cv2.putText(
+                    frame,
+                    heading_text,
+                    (x, heading_y),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.45,
+                    color,
+                    2,
+                )
+                
+                # Draw ID/state/avg label (second line)
+                cv2.putText(
+                    frame,
+                    f"ID {t.track_id} {t.state.name} avg={t.avg_score():.2f}",
+                    (x, label_y),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.45,
+                    color,
+                    2,
+                )
+            else:
+                # Original label without heading overlay
+                cv2.putText(
+                    frame,
+                    f"ID {t.track_id} {t.state.name} avg={t.avg_score():.2f}",
+                    (x, max(0, y - 10)),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.45,
+                    color,
+                    2,
+                )
 
         # rejections - improved visibility
         if self.cfg.get("show_rejection_reason", False):

@@ -23,6 +23,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "fps": 30,
         "backend": "v4l2",
         "max_consecutive_read_failures": 120,
+        "hfov_deg": 70.0,  # Horizontal field of view in degrees
     },
     "debug": {
         "show_windows": True,
@@ -32,6 +33,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "show_groups": False,
         "log_rejections": False,    # Log rejections to console
         "log_suspects": False,      # Log suspects to console
+        "show_heading_overlay": False,  # Show heading direction overlay on CONFIRMED tracks
+        "heading_center_deadband_deg": 0.5,  # Deadband for CENTER classification in degrees
     },
     "hsv_orange": {
         "low_1": [0, 90, 90],
