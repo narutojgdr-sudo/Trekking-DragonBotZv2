@@ -5,14 +5,15 @@ import logging
 import math
 import os
 import time
+from dataclasses import dataclass
 from datetime import datetime
 
 import cv2
 
+from .utils import ConeState
 from .config import load_config, save_config, watch_config
 from .detector import ConeDetector
 from .tracker import MultiConeTracker
-from .utils import ConeState
 from .visualizer import Visualizer
 
 logger = logging.getLogger(__name__)
@@ -20,6 +21,16 @@ logger = logging.getLogger(__name__)
 # Constants for debug heading calculations
 MIN_BBOX_HEIGHT_FOR_DISTANCE = 10.0  # Minimum bbox height (px) to compute distance estimate
 RUN_LOG_FLUSH_EVERY = 10
+
+
+@dataclass(frozen=True)
+class SourceInfo:
+    source_label: str
+    using_video: bool
+    video_path: str
+    camera_index: int | None
+    conflict: bool
+    video_missing: bool
 
 
 # =========================
@@ -42,16 +53,16 @@ class App:
         self._video_ts_fallback_logged = False
         self._playback_start_ts = None
         self._playback_frame_duration = None
-        source_label, using_video, video_path, camera_index, conflict, video_missing = self._resolve_source(self.config)
-        if conflict:
+        source_info = self._resolve_source(self.config)
+        if source_info.conflict:
             msg = "CONFIG ERROR: Both camera.index and camera.video_path are set. Choose only one input source (camera or video)."
             logger.error(f"[source=unknown] {msg}")
             raise SystemExit(msg)
-        self.source_label = source_label
-        self.using_video = using_video
-        self.video_path = video_path
-        self.camera_index = camera_index
-        self.video_missing = video_missing
+        self.source_label = source_info.source_label
+        self.using_video = source_info.using_video
+        self.video_path = source_info.video_path
+        self.camera_index = source_info.camera_index
+        self.video_missing = source_info.video_missing
         self.detector = ConeDetector(self.config)
         self.tracker = MultiConeTracker(self.config)
         self.vis = Visualizer(self.config)
@@ -59,17 +70,24 @@ class App:
         self.config_reload_msg = None
         self.config_reload_time = 0.0
 
-    def _resolve_source(self, config):
+    def _resolve_source(self, config) -> SourceInfo:
         cam = config["camera"]
         video_path = cam.get("video_path", "") or ""
         camera_index = cam.get("index", None)
-        index_is_set = isinstance(camera_index, int) and camera_index >= 0
+        index_is_set = camera_index is not None and isinstance(camera_index, int) and camera_index >= 0
         video_configured = bool(video_path)
         video_exists = video_configured and os.path.exists(video_path)
         conflict = video_exists and index_is_set
         video_missing = video_configured and not video_exists
         source_label = "video" if video_exists else "camera"
-        return source_label, video_exists, video_path, camera_index, conflict, video_missing
+        return SourceInfo(
+            source_label=source_label,
+            using_video=video_exists,
+            video_path=video_path,
+            camera_index=camera_index,
+            conflict=conflict,
+            video_missing=video_missing,
+        )
 
     def _log_with_source(self, level: int, message: str) -> None:
         source = self.source_label or "unknown"
@@ -88,6 +106,9 @@ class App:
         os.makedirs(run_log_dir, exist_ok=True)
         safe_ts = self._sanitize_timestamp(self.run_start_ts)
         filename = filename_pattern.format(source=self.source_label, start_ts=safe_ts)
+        filename = os.path.basename(filename)
+        if not filename:
+            filename = f"run_{self.source_label}_{safe_ts}.jsonl"
         base, ext = os.path.splitext(filename)
         candidate = filename
         counter = 1
@@ -117,14 +138,14 @@ class App:
         """Reload configuration and reinitialize components."""
         self._log_with_source(logging.INFO, "⚙️ Recarregando configuração...")
         new_config = load_config()
-        source_label, using_video, _video_path, _camera_index, conflict, video_missing = self._resolve_source(new_config)
-        if conflict:
+        source_info = self._resolve_source(new_config)
+        if source_info.conflict:
             msg = "CONFIG ERROR: Both camera.index and camera.video_path are set. Choose only one input source (camera or video)."
             self._log_with_source(logging.ERROR, f"{msg} Reload ignorado.")
             return
-        if source_label != self.source_label:
+        if source_info.source_label != self.source_label:
             self._log_with_source(logging.WARNING, "Config mudou a fonte de entrada; reinicie o app para aplicar (mantendo a fonte atual).")
-        if video_missing:
+        if source_info.video_missing:
             self._log_with_source(logging.WARNING, "VIDEO PATH configured but file not found -> falling back to camera")
         self.config = new_config
         self.detector = ConeDetector(self.config)
@@ -320,7 +341,10 @@ class App:
                                     self._log_with_source(logging.WARNING, "CAP_PROP_POS_MSEC unavailable; using frame_idx-based timestamp")
                                     self._video_ts_fallback_logged = True
                             else:
-                                ts_source_ms = None
+                                ts_source_ms = ts_wallclock_ms
+                                if not self._video_ts_fallback_logged:
+                                    self._log_with_source(logging.WARNING, "CAP_PROP_POS_MSEC unavailable and fps invalid; using wallclock timestamp")
+                                    self._video_ts_fallback_logged = True
 
                     focal_px = self._focal_px(cam["process_width"])
                     center_x = cam["process_width"] / 2.0
