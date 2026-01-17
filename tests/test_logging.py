@@ -70,7 +70,8 @@ def test_export_run_log_video_timestamp(tmp_path):
     frame = np.zeros((config["camera"]["capture_height"], config["camera"]["capture_width"], 3), dtype=np.uint8)
     mock_cap = MagicMock()
     mock_cap.isOpened.return_value = True
-    mock_cap.read.side_effect = [(True, frame), (True, frame), (False, None), (False, None)]
+    end_of_stream = (False, None)
+    mock_cap.read.side_effect = [(True, frame), (True, frame), end_of_stream, end_of_stream]
     mock_cap.get.return_value = 1000.0
 
     detector = MagicMock()

@@ -102,7 +102,7 @@ class TestVideoInputLogic:
         from cone_tracker import App
         with pytest.raises(SystemExit) as excinfo:
             App()
-        assert "CONFIG ERROR: Both camera.index and camera.video_path are set." in str(excinfo.value)
+        assert "CONFIG ERROR: Both camera.index and camera.video_path are set." in excinfo.value.args[0]
 
     @patch('cone_tracker.app.cv2.VideoCapture')
     @patch('cone_tracker.app.os.path.exists')

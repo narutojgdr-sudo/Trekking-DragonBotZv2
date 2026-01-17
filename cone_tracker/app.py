@@ -6,7 +6,8 @@ import math
 import os
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
+from typing import Optional
 
 import cv2
 
@@ -21,6 +22,11 @@ logger = logging.getLogger(__name__)
 # Constants for debug heading calculations
 MIN_BBOX_HEIGHT_FOR_DISTANCE = 10.0  # Minimum bbox height (px) to compute distance estimate
 RUN_LOG_FLUSH_EVERY = 10
+DEFAULT_RUN_LOG_FILENAME_PATTERN = "run_{source}_{start_ts}.jsonl"
+RUN_LOG_MAX_FILENAME_ATTEMPTS = 1000
+HFOV_MIN_DEG = 10.0
+HFOV_MAX_DEG = 170.0
+HFOV_FALLBACK_DEG = 70.0
 
 
 @dataclass(frozen=True)
@@ -28,7 +34,7 @@ class SourceInfo:
     source_label: str
     using_video: bool
     video_path: str
-    camera_index: int | None
+    camera_index: Optional[int]
     conflict: bool
     video_missing: bool
 
@@ -74,7 +80,7 @@ class App:
         cam = config["camera"]
         video_path = cam.get("video_path", "") or ""
         camera_index = cam.get("index", None)
-        index_is_set = camera_index is not None and isinstance(camera_index, int) and camera_index >= 0
+        index_is_set = self._is_camera_index_configured(camera_index)
         video_configured = bool(video_path)
         video_exists = video_configured and os.path.exists(video_path)
         conflict = video_exists and index_is_set
@@ -89,12 +95,17 @@ class App:
             video_missing=video_missing,
         )
 
+    @staticmethod
+    def _is_camera_index_configured(camera_index: Optional[int]) -> bool:
+        return camera_index is not None and isinstance(camera_index, int) and camera_index >= 0
+
     def _log_with_source(self, level: int, message: str) -> None:
         source = self.source_label or "unknown"
         logger.log(level, f"[source={source}] {message}")
 
     def _iso_timestamp(self) -> str:
-        return datetime.utcnow().isoformat(timespec="milliseconds") + "Z"
+        timestamp = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+        return timestamp.replace("+00:00", "Z")
 
     def _sanitize_timestamp(self, timestamp: str) -> str:
         return timestamp.replace(":", "-").replace(".", "-")
@@ -102,7 +113,7 @@ class App:
     def _init_run_log(self) -> None:
         debug_cfg = self.config["debug"]
         run_log_dir = debug_cfg.get("run_log_dir", "logs")
-        filename_pattern = debug_cfg.get("run_log_filename_pattern", "run_{source}_{start_ts}.jsonl")
+        filename_pattern = debug_cfg.get("run_log_filename_pattern", DEFAULT_RUN_LOG_FILENAME_PATTERN)
         os.makedirs(run_log_dir, exist_ok=True)
         safe_ts = self._sanitize_timestamp(self.run_start_ts)
         filename = filename_pattern.format(source=self.source_label, start_ts=safe_ts)
@@ -112,11 +123,19 @@ class App:
         base, ext = os.path.splitext(filename)
         candidate = filename
         counter = 1
-        while os.path.exists(os.path.join(run_log_dir, candidate)):
+        while os.path.exists(os.path.join(run_log_dir, candidate)) and counter < RUN_LOG_MAX_FILENAME_ATTEMPTS:
             candidate = f"{base}_{counter}{ext}"
             counter += 1
+        if counter >= RUN_LOG_MAX_FILENAME_ATTEMPTS and os.path.exists(os.path.join(run_log_dir, candidate)):
+            candidate = f"{base}_{int(time.time() * 1000)}{ext}"
         self.run_log_path = os.path.join(run_log_dir, candidate)
-        self.run_log_handle = open(self.run_log_path, "a", encoding="utf-8")
+        try:
+            self.run_log_handle = open(self.run_log_path, "a", encoding="utf-8")
+        except OSError as exc:
+            self.run_log_handle = None
+            self.run_log_path = None
+            self._log_with_source(logging.ERROR, f"⚠️ Failed to open run log: {exc}")
+            return
         self._log_with_source(logging.INFO, f"📝 Run log export enabled: {self.run_log_path}")
 
     def _write_run_log(self, record: dict) -> None:
@@ -127,10 +146,10 @@ class App:
             self.run_log_handle.flush()
 
     def _focal_px(self, frame_w: int) -> float:
-        hfov_deg = self.config["camera"].get("hfov_deg", 70.0)
-        if hfov_deg < 10.0 or hfov_deg > 170.0:
-            self._log_with_source(logging.WARNING, f"Invalid hfov_deg={hfov_deg}, using fallback of 70.0")
-            hfov_deg = 70.0
+        hfov_deg = self.config["camera"].get("hfov_deg", HFOV_FALLBACK_DEG)
+        if hfov_deg < HFOV_MIN_DEG or hfov_deg > HFOV_MAX_DEG:
+            self._log_with_source(logging.WARNING, f"Invalid hfov_deg={hfov_deg}, using fallback of {HFOV_FALLBACK_DEG}")
+            hfov_deg = HFOV_FALLBACK_DEG
         hfov_rad = math.radians(hfov_deg)
         return (frame_w / 2.0) / math.tan(hfov_rad / 2.0)
 
@@ -260,9 +279,11 @@ class App:
         max_fail = int(cam.get("max_consecutive_read_failures", 120))
         if using_video and cam.get("playback_mode", "fast") == "realtime":
             fps_setting = cam.get("fps", 30)
-            if fps_setting > 0:
+            if fps_setting >= 1:
                 self._playback_start_ts = time.time()
                 self._playback_frame_duration = 1.0 / fps_setting
+            else:
+                self._log_with_source(logging.WARNING, f"Invalid fps for realtime playback: {fps_setting}")
         
         # Config watch setup
         config_path = "cone_config.yaml"
@@ -331,7 +352,7 @@ class App:
                     ts_source_ms = ts_wallclock_ms
                     if using_video:
                         pos_msec = cap.get(cv2.CAP_PROP_POS_MSEC)
-                        if pos_msec and pos_msec > 0:
+                        if pos_msec is not None and (pos_msec > 0 or self.frame_idx == 0):
                             ts_source_ms = int(pos_msec)
                         else:
                             fps_setting = cam.get("fps", 30)
@@ -425,9 +446,9 @@ class App:
                 try:
                     self.run_log_handle.flush()
                     self.run_log_handle.close()
-                    self._log_with_source(logging.INFO, f"✅ Run log exportado em: {self.run_log_path}")
+                    self._log_with_source(logging.INFO, f"✅ Run log exported to: {self.run_log_path}")
                 except Exception:
-                    self._log_with_source(logging.WARNING, "⚠️ Falha ao fechar o run log")
+                    self._log_with_source(logging.WARNING, "⚠️ Failed to close run log")
             try:
                 cv2.destroyAllWindows()
             except (cv2.error, Exception):
