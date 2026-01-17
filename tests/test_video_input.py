@@ -3,6 +3,7 @@ Unit tests for video input functionality in cone_tracker
 """
 import copy
 import cv2
+import logging
 import os
 import tempfile
 from unittest.mock import Mock, patch, MagicMock
@@ -64,6 +65,8 @@ class TestVideoInputLogic:
         # Mock config with video path
         mock_config = copy.deepcopy(DEFAULT_CONFIG)
         mock_config["camera"]["video_path"] = "test_video.mp4"
+        mock_config["camera"]["index"] = -1
+        mock_config["camera"]["max_consecutive_read_failures"] = 1
         mock_load_config.return_value = mock_config
         
         # Mock video file exists
@@ -85,7 +88,22 @@ class TestVideoInputLogic:
         
         # Verify VideoCapture was called with video path (not camera index)
         mock_video_capture.assert_called_with("test_video.mp4")
-    
+
+    @patch('cone_tracker.app.os.path.exists')
+    @patch('cone_tracker.app.load_config')
+    def test_conflicting_camera_and_video_raises(self, mock_load_config, mock_exists):
+        """Test that app refuses to start when both camera and video are set"""
+        mock_config = copy.deepcopy(DEFAULT_CONFIG)
+        mock_config["camera"]["video_path"] = "test_video.mp4"
+        mock_config["camera"]["index"] = 0
+        mock_load_config.return_value = mock_config
+        mock_exists.return_value = True
+
+        from cone_tracker import App
+        with pytest.raises(SystemExit) as excinfo:
+            App()
+        assert "CONFIG ERROR: Both camera.index and camera.video_path are set." in str(excinfo.value)
+
     @patch('cone_tracker.app.cv2.VideoCapture')
     @patch('cone_tracker.app.os.path.exists')
     @patch('cone_tracker.app.load_config')
@@ -94,6 +112,7 @@ class TestVideoInputLogic:
         # Mock config with empty video path
         mock_config = copy.deepcopy(DEFAULT_CONFIG)
         mock_config["camera"]["video_path"] = ""
+        mock_config["camera"]["max_consecutive_read_failures"] = 1
         mock_load_config.return_value = mock_config
         
         # Mock VideoCapture
@@ -116,11 +135,12 @@ class TestVideoInputLogic:
     @patch('cone_tracker.app.cv2.VideoCapture')
     @patch('cone_tracker.app.os.path.exists')
     @patch('cone_tracker.app.load_config')
-    def test_fallback_to_camera_when_video_not_found(self, mock_load_config, mock_exists, mock_video_capture):
+    def test_fallback_to_camera_when_video_not_found(self, mock_load_config, mock_exists, mock_video_capture, caplog):
         """Test that app falls back to camera when video file doesn't exist"""
         # Mock config with video path
         mock_config = copy.deepcopy(DEFAULT_CONFIG)
         mock_config["camera"]["video_path"] = "nonexistent_video.mp4"
+        mock_config["camera"]["max_consecutive_read_failures"] = 1
         mock_load_config.return_value = mock_config
         
         # Mock video file does not exist
@@ -136,9 +156,12 @@ class TestVideoInputLogic:
         app = App()
         
         try:
-            app.run()
+            with caplog.at_level(logging.WARNING):
+                app.run()
         except Exception:
             pass  # Expected to fail when trying to read frames
+
+        assert "VIDEO PATH configured but file not found -> falling back to camera" in caplog.text
         
         # Verify VideoCapture was called with camera (fallback), not video path
         mock_video_capture.assert_called_with(0, cv2.CAP_V4L2)

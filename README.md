@@ -398,6 +398,10 @@ debug:
   draw_suspects: true          # Mostrar suspects no vídeo (retângulos amarelos)
   log_rejections: true         # Log de rejeições no console
   log_suspects: true           # Log de suspects no console
+  annotate_source_in_overlay: true  # Mostrar SOURCE: camera|video no overlay
+  export_run_log: true              # Exportar JSONL por frame
+  run_log_dir: "logs"               # Diretório do run log
+  run_log_filename_pattern: "run_{source}_{start_ts}.jsonl"
 ```
 
 ### Entendendo os Logs
@@ -414,6 +418,24 @@ debug:
 - Score médio deve ser >= `confirm_avg_score`
 
 **Tracks Deletados (🗑️)**: Tracks perdidos ou com score muito baixo
+
+### Fonte de entrada (câmera vs vídeo)
+
+- Se `camera.video_path` aponta para um arquivo existente, a fonte é **video**.
+- Se `camera.video_path` está vazio ou não existe, a fonte é **camera** (com WARNING de fallback).
+- **Não configure os dois ao mesmo tempo**: se `camera.index` (>=0) e `camera.video_path` válido forem definidos juntos, o app aborta com:
+  ```
+  CONFIG ERROR: Both camera.index and camera.video_path are set. Choose only one input source (camera or video).
+  ```
+- Para usar vídeo sem conflito, defina `camera.index: -1` (ou remova) e mantenha `video_path` válido.
+
+### Run log estruturado (JSONL)
+
+Quando `debug.export_run_log: true`, o app gera um arquivo `.jsonl` com um objeto JSON por frame:
+
+```json
+{"run_start_ts":"2026-01-17T12:34:56.789Z","frame_idx":0,"ts_wallclock_ms":1705493696789,"ts_source_ms":0,"source":"video","detected":false,"selected_target_id":null,"tracks":[],"rejects_count":0,"fps":23.8}
+```
 
 ### Exemplo de Uso
 
@@ -432,6 +454,8 @@ debug:
 camera:
   video_path: "teste.mp4"
   output_video_path: "debug_output.mp4"
+  playback_mode: "realtime"  # fast | realtime
+  index: -1
 ```
 
 **Saída esperada no console:**

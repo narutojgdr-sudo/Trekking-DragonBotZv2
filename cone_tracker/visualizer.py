@@ -24,6 +24,7 @@ class Visualizer:
     def __init__(self, config: Dict[str, Any]):
         self.cfg = config["debug"]
         self.camera_cfg = config["camera"]
+        self.source_label = None
 
     def _color(self, track_id: int) -> Tuple[int, int, int]:
         """Get color for track ID."""
@@ -83,6 +84,9 @@ class Visualizer:
         
         # FPS
         cv2.putText(frame, f"FPS: {fps:.1f}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+
+        if self.cfg.get("annotate_source_in_overlay", False) and self.source_label:
+            cv2.putText(frame, f"SOURCE: {self.source_label}", (10, 15), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
         
         # Tracks info (improved with suspects)
         confirmed_count = sum(1 for t in tracks if t.state == ConeState.CONFIRMED)

@@ -22,6 +22,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "process_height": 540,
         "fps": 30,
         "backend": "v4l2",
+        "playback_mode": "fast",  # fast or realtime
         "max_consecutive_read_failures": 120,
         "hfov_deg": 70.0,  # Horizontal field of view in degrees
     },
@@ -35,6 +36,11 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "log_suspects": False,      # Log suspects to console
         "show_heading_overlay": False,  # Show heading direction overlay on CONFIRMED tracks
         "heading_center_deadband_deg": 0.5,  # Deadband for CENTER classification in degrees
+        "annotate_source_in_overlay": False,
+        "export_run_log": False,
+        "run_log_dir": "logs",
+        "run_log_filename_pattern": "run_{source}_{start_ts}.jsonl",
+        "json_logs": False,
     },
     "hsv_orange": {
         "low_1": [0, 90, 90],

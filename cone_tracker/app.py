@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Main application for cone tracking."""
+import json
 import logging
 import math
 import os
 import time
+from datetime import datetime
 
 import cv2
 
@@ -17,6 +19,7 @@ logger = logging.getLogger(__name__)
 
 # Constants for debug heading calculations
 MIN_BBOX_HEIGHT_FOR_DISTANCE = 10.0  # Minimum bbox height (px) to compute distance estimate
+RUN_LOG_FLUSH_EVERY = 10
 
 
 # =========================
@@ -27,57 +30,137 @@ class App:
     
     def __init__(self):
         self.config = load_config()
+        self.source_label = None
+        self.using_video = False
+        self.video_path = ""
+        self.camera_index = None
+        self.video_missing = False
+        self.run_log_handle = None
+        self.run_log_path = None
+        self.run_start_ts = None
+        self.frame_idx = 0
+        self._video_ts_fallback_logged = False
+        self._playback_start_ts = None
+        self._playback_frame_duration = None
+        source_label, using_video, video_path, camera_index, conflict, video_missing = self._resolve_source(self.config)
+        if conflict:
+            msg = "CONFIG ERROR: Both camera.index and camera.video_path are set. Choose only one input source (camera or video)."
+            logger.error(f"[source=unknown] {msg}")
+            raise SystemExit(msg)
+        self.source_label = source_label
+        self.using_video = using_video
+        self.video_path = video_path
+        self.camera_index = camera_index
+        self.video_missing = video_missing
         self.detector = ConeDetector(self.config)
         self.tracker = MultiConeTracker(self.config)
         self.vis = Visualizer(self.config)
+        self.vis.source_label = self.source_label
         self.config_reload_msg = None
         self.config_reload_time = 0.0
 
+    def _resolve_source(self, config):
+        cam = config["camera"]
+        video_path = cam.get("video_path", "") or ""
+        camera_index = cam.get("index", None)
+        index_is_set = isinstance(camera_index, int) and camera_index >= 0
+        video_configured = bool(video_path)
+        video_exists = video_configured and os.path.exists(video_path)
+        conflict = video_exists and index_is_set
+        video_missing = video_configured and not video_exists
+        source_label = "video" if video_exists else "camera"
+        return source_label, video_exists, video_path, camera_index, conflict, video_missing
+
+    def _log_with_source(self, level: int, message: str) -> None:
+        source = self.source_label or "unknown"
+        logger.log(level, f"[source={source}] {message}")
+
+    def _iso_timestamp(self) -> str:
+        return datetime.utcnow().isoformat(timespec="milliseconds") + "Z"
+
+    def _sanitize_timestamp(self, timestamp: str) -> str:
+        return timestamp.replace(":", "-").replace(".", "-")
+
+    def _init_run_log(self) -> None:
+        debug_cfg = self.config["debug"]
+        run_log_dir = debug_cfg.get("run_log_dir", "logs")
+        filename_pattern = debug_cfg.get("run_log_filename_pattern", "run_{source}_{start_ts}.jsonl")
+        os.makedirs(run_log_dir, exist_ok=True)
+        safe_ts = self._sanitize_timestamp(self.run_start_ts)
+        filename = filename_pattern.format(source=self.source_label, start_ts=safe_ts)
+        base, ext = os.path.splitext(filename)
+        candidate = filename
+        counter = 1
+        while os.path.exists(os.path.join(run_log_dir, candidate)):
+            candidate = f"{base}_{counter}{ext}"
+            counter += 1
+        self.run_log_path = os.path.join(run_log_dir, candidate)
+        self.run_log_handle = open(self.run_log_path, "a", encoding="utf-8")
+        self._log_with_source(logging.INFO, f"📝 Run log export enabled: {self.run_log_path}")
+
+    def _write_run_log(self, record: dict) -> None:
+        if not self.run_log_handle:
+            return
+        self.run_log_handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        if self.frame_idx % RUN_LOG_FLUSH_EVERY == 0:
+            self.run_log_handle.flush()
+
+    def _focal_px(self, frame_w: int) -> float:
+        hfov_deg = self.config["camera"].get("hfov_deg", 70.0)
+        if hfov_deg < 10.0 or hfov_deg > 170.0:
+            self._log_with_source(logging.WARNING, f"Invalid hfov_deg={hfov_deg}, using fallback of 70.0")
+            hfov_deg = 70.0
+        hfov_rad = math.radians(hfov_deg)
+        return (frame_w / 2.0) / math.tan(hfov_rad / 2.0)
+
     def reload_config(self):
         """Reload configuration and reinitialize components."""
-        logger.info("⚙️ Recarregando configuração...")
-        self.config = load_config()
+        self._log_with_source(logging.INFO, "⚙️ Recarregando configuração...")
+        new_config = load_config()
+        source_label, using_video, _video_path, _camera_index, conflict, video_missing = self._resolve_source(new_config)
+        if conflict:
+            msg = "CONFIG ERROR: Both camera.index and camera.video_path are set. Choose only one input source (camera or video)."
+            self._log_with_source(logging.ERROR, f"{msg} Reload ignorado.")
+            return
+        if source_label != self.source_label:
+            self._log_with_source(logging.WARNING, "Config mudou a fonte de entrada; reinicie o app para aplicar (mantendo a fonte atual).")
+        if video_missing:
+            self._log_with_source(logging.WARNING, "VIDEO PATH configured but file not found -> falling back to camera")
+        self.config = new_config
         self.detector = ConeDetector(self.config)
         self.tracker = MultiConeTracker(self.config)
         self.vis = Visualizer(self.config)
+        self.vis.source_label = self.source_label
         self.config_reload_msg = "⚙️ Config recarregada!"
         self.config_reload_time = time.time()
-        logger.info("✅ Configuração recarregada com sucesso!")
+        self._log_with_source(logging.INFO, "✅ Configuração recarregada com sucesso!")
 
-    def _debug_print_heading(self, tracks: list, frame_w: int):
+    def _debug_print_heading(self, tracks: list, frame_w: int, frame_idx: int):
         """
         Print human-friendly heading/steering debug info to terminal.
         
         Args:
             tracks: List of Track objects to debug print
             frame_w: Frame width in pixels (for center calculation)
+            frame_idx: Current frame index
         """
         # Check if debug printing is enabled
         if not self.config["debug"].get("print_heading", False):
             return
         
-        # Get HFOV from config with fallback to 70 degrees
-        hfov_deg = self.config["camera"].get("hfov_deg", 70.0)
-        
-        # Validate HFOV is in a reasonable range (10-170 degrees)
-        if hfov_deg < 10.0 or hfov_deg > 170.0:
-            logger.warning(f"Invalid hfov_deg={hfov_deg}, using fallback of 70.0")
-            hfov_deg = 70.0
-        
-        hfov_rad = math.radians(hfov_deg)
-        
         # Compute focal length using pinhole model: focal = (width/2) / tan(hfov/2)
-        focal_px = (frame_w / 2.0) / math.tan(hfov_rad / 2.0)
+        focal_px = self._focal_px(frame_w)
         
         # Get optional cone height for distance estimation
         cone_height_m = self.config["debug"].get("cone_height_m", None)
         
         # Frame center
         center_x = frame_w / 2.0
+        timestamp = self._iso_timestamp()
         
         if not tracks:
             # No tracks detected
-            logger.info("HEADING_DBG: detected=False")
+            logger.info(f"HEADING_DBG [source={self.source_label}] {timestamp} frame={frame_idx}: detected=False")
             return
         
         # Process each track
@@ -91,7 +174,7 @@ class App:
             angle_deg = math.degrees(angle_rad)
             
             # Build log message
-            msg = f"HEADING_DBG: detected=True id={track.track_id} cx={track.cx:.1f} err_px={err_px:+.1f} err_deg={angle_deg:+.2f} bbox_h={int(track.h)}"
+            msg = f"HEADING_DBG [source={self.source_label}] {timestamp} frame={frame_idx}: detected=True id={track.track_id} cx={track.cx:.1f} err_px={err_px:+.1f} err_deg={angle_deg:+.2f} bbox_h={int(track.h)}"
             
             # Optionally estimate distance if cone height is provided
             # Use threshold to avoid unrealistic distance calculations for very small bboxes
@@ -108,27 +191,22 @@ class App:
     def run(self):
         """Run the main application loop."""
         cam = self.config["camera"]
+        using_video = self.using_video
+        video_path = self.video_path
+        camera_index = self.camera_index if self.camera_index is not None else 0
         
-        # Check if video_path is configured and file exists
-        video_path = cam.get("video_path", "")
-        using_video = False
+        if self.video_missing:
+            self._log_with_source(logging.WARNING, "VIDEO PATH configured but file not found -> falling back to camera")
         
-        if video_path and os.path.exists(video_path):
-            # Use video file
+        if using_video:
             cap = cv2.VideoCapture(video_path)
-            using_video = True
-            logger.info(f"📹 Usando vídeo: {video_path}")
-        elif video_path and not os.path.exists(video_path):
-            # Video path specified but file doesn't exist - warn and fallback to camera
-            logger.warning(f"⚠️  Vídeo não encontrado: {video_path}. Usando câmera como fallback.")
-            cap = cv2.VideoCapture(cam["index"], cv2.CAP_V4L2)
-            logger.info(f"📷 Usando câmera: index {cam['index']}")
+            self._log_with_source(logging.INFO, f"📹 Usando vídeo: {video_path}")
         else:
-            # No video path or empty - use camera
-            cap = cv2.VideoCapture(cam["index"], cv2.CAP_V4L2)
-            logger.info(f"📷 Usando câmera: index {cam['index']}")
+            cap = cv2.VideoCapture(camera_index, cv2.CAP_V4L2)
+            self._log_with_source(logging.INFO, f"📷 Usando câmera: index {camera_index}")
 
         if not cap.isOpened():
+            self._log_with_source(logging.ERROR, "Camera failed to open (cap.isOpened() == False)")
             raise RuntimeError("Camera failed to open (cap.isOpened() == False)")
 
         # Only apply camera settings if not using video file
@@ -146,14 +224,24 @@ class App:
             size = (cam["process_width"], cam["process_height"])  # Tamanho do frame processado
             video_writer = cv2.VideoWriter(output_path, fourcc, fps_out, size)
             if video_writer.isOpened():
-                logger.info(f"💾 Salvando vídeo processado em: {output_path}")
+                self._log_with_source(logging.INFO, f"💾 Salvando vídeo processado em: {output_path}")
             else:
-                logger.warning(f"⚠️ Não foi possível criar arquivo de vídeo: {output_path}")
+                self._log_with_source(logging.WARNING, f"⚠️ Não foi possível criar arquivo de vídeo: {output_path}")
                 video_writer = None
+
+        self.frame_idx = 0
+        self.run_start_ts = self._iso_timestamp()
+        if self.config["debug"].get("export_run_log", False):
+            self._init_run_log()
 
         t_last = time.time()
         fail_count = 0
         max_fail = int(cam.get("max_consecutive_read_failures", 120))
+        if using_video and cam.get("playback_mode", "fast") == "realtime":
+            fps_setting = cam.get("fps", 30)
+            if fps_setting > 0:
+                self._playback_start_ts = time.time()
+                self._playback_frame_duration = 1.0 / fps_setting
         
         # Config watch setup
         config_path = "cone_config.yaml"
@@ -173,17 +261,17 @@ class App:
                 if not ret:
                     # If using video and reached end, restart it
                     if using_video:
-                        logger.info("🔄 Reiniciando vídeo...")
+                        self._log_with_source(logging.INFO, "🔄 Reiniciando vídeo...")
                         cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                         ret, frame = cap.read()
                         if not ret:
-                            logger.error("Failed to restart video. Exiting.")
+                            self._log_with_source(logging.ERROR, "Failed to restart video. Exiting.")
                             break
                     else:
                         # Camera read failure
                         fail_count += 1
                         if fail_count >= max_fail:
-                            logger.error("Too many consecutive camera read failures. Exiting.")
+                            self._log_with_source(logging.ERROR, "Too many consecutive camera read failures. Exiting.")
                             break
                         time.sleep(0.01)
                         continue
@@ -195,27 +283,80 @@ class App:
                 
                 # Log rejections if configured
                 if rejects and self.config["debug"].get("log_rejections", False):
-                    logger.info(f"🔴 Frame com {len(rejects)} rejeições:")
+                    self._log_with_source(logging.INFO, f"🔴 Frame com {len(rejects)} rejeições:")
                     for bbox, reason in rejects[:5]:  # Show up to 5 rejections
-                        logger.info(f"   ✗ {reason}")
+                        self._log_with_source(logging.INFO, f"   ✗ {reason}")
                 
                 self.tracker.update(detections)
                 
                 # Debug print heading info for confirmed tracks
                 tracks_for_control = self.tracker.confirmed_tracks()
-                self._debug_print_heading(tracks_for_control, cam["process_width"])
+                self._debug_print_heading(tracks_for_control, cam["process_width"], self.frame_idx)
                 
                 # Log suspects after tracking
                 if self.config["debug"].get("log_suspects", False):
                     suspects = [t for t in self.tracker.tracks if t.state == ConeState.SUSPECT]
                     if suspects:
-                        logger.info(f"🟡 Frame com {len(suspects)} suspects:")
+                        self._log_with_source(logging.INFO, f"🟡 Frame com {len(suspects)} suspects:")
                         for t in suspects[:5]:  # Show up to 5 suspects
-                            logger.info(f"   ? ID {t.track_id}: frames={t.frames_seen}, avg={t.avg_score():.2f}")
+                            self._log_with_source(logging.INFO, f"   ? ID {t.track_id}: frames={t.frames_seen}, avg={t.avg_score():.2f}")
 
                 now = time.time()
                 fps = 1.0 / (now - t_last + 1e-6)
                 t_last = now
+                ts_wallclock_ms = int(now * 1000)
+
+                if self.run_log_handle:
+                    ts_source_ms = ts_wallclock_ms
+                    if using_video:
+                        pos_msec = cap.get(cv2.CAP_PROP_POS_MSEC)
+                        if pos_msec and pos_msec > 0:
+                            ts_source_ms = int(pos_msec)
+                        else:
+                            fps_setting = cam.get("fps", 30)
+                            if fps_setting > 0:
+                                ts_source_ms = int(self.frame_idx * (1000.0 / fps_setting))
+                                if not self._video_ts_fallback_logged:
+                                    self._log_with_source(logging.WARNING, "CAP_PROP_POS_MSEC unavailable; using frame_idx-based timestamp")
+                                    self._video_ts_fallback_logged = True
+                            else:
+                                ts_source_ms = None
+
+                    focal_px = self._focal_px(cam["process_width"])
+                    center_x = cam["process_width"] / 2.0
+                    cone_height_m = self.config["debug"].get("cone_height_m", None)
+                    track_payload = []
+                    for track in tracks_for_control:
+                        err_px = track.cx - center_x
+                        angle_deg = math.degrees(math.atan(err_px / focal_px))
+                        est_dist_m = None
+                        if cone_height_m is not None and track.h > MIN_BBOX_HEIGHT_FOR_DISTANCE:
+                            est_dist_m = (cone_height_m * focal_px) / track.h
+                        track_payload.append({
+                            "id": track.track_id,
+                            "bbox": list(track.bbox()),
+                            "cx": float(track.cx),
+                            "cy": float(track.cy),
+                            "err_px": float(err_px),
+                            "err_deg": float(angle_deg),
+                            "bbox_h": int(track.h),
+                            "est_dist_m": None if est_dist_m is None else float(est_dist_m),
+                            "avg_score": float(track.avg_score()),
+                        })
+
+                    record = {
+                        "run_start_ts": self.run_start_ts,
+                        "frame_idx": self.frame_idx,
+                        "ts_wallclock_ms": ts_wallclock_ms,
+                        "ts_source_ms": ts_source_ms,
+                        "source": self.source_label,
+                        "detected": bool(tracks_for_control),
+                        "selected_target_id": None,
+                        "tracks": track_payload,
+                        "rejects_count": len(rejects),
+                        "fps": float(fps),
+                    }
+                    self._write_run_log(record)
 
                 # Only CONFIRMED tracks by default (cfg.draw_suspects controls)
                 tracks_to_draw = self.tracker.tracks if self.config["debug"].get("draw_suspects", False) else self.tracker.confirmed_tracks()
@@ -239,15 +380,30 @@ class App:
                         if k == ord("r"):
                             self.reload_config()
                     except cv2.error as e:
-                        logger.warning(f"⚠️ Não foi possível mostrar janelas (ambiente sem GUI): {e}")
-                        logger.info("💡 Dica: Desabilite 'show_windows' no config ou use 'output_video_path'")
+                        self._log_with_source(logging.WARNING, f"⚠️ Não foi possível mostrar janelas (ambiente sem GUI): {e}")
+                        self._log_with_source(logging.INFO, "💡 Dica: Desabilite 'show_windows' no config ou use 'output_video_path'")
                         # Continue processing but stop trying to show windows
                         self.config["debug"]["show_windows"] = False
+
+                if using_video and self._playback_frame_duration:
+                    target_time = self._playback_start_ts + (self.frame_idx + 1) * self._playback_frame_duration
+                    sleep_time = target_time - time.time()
+                    if sleep_time > 0:
+                        time.sleep(sleep_time)
+
+                self.frame_idx += 1
         finally:
             cap.release()
             if video_writer is not None:
                 video_writer.release()
-                logger.info(f"✅ Vídeo processado salvo em: {output_path}")
+                self._log_with_source(logging.INFO, f"✅ Vídeo processado salvo em: {output_path}")
+            if self.run_log_handle:
+                try:
+                    self.run_log_handle.flush()
+                    self.run_log_handle.close()
+                    self._log_with_source(logging.INFO, f"✅ Run log exportado em: {self.run_log_path}")
+                except Exception:
+                    self._log_with_source(logging.WARNING, "⚠️ Falha ao fechar o run log")
             try:
                 cv2.destroyAllWindows()
             except (cv2.error, Exception):
