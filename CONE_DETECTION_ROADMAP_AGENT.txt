@@ -245,7 +245,9 @@ PARÂMETROS CONFIGURÁVEIS (via cone_config.yaml):
 - camera.hfov_deg: Campo de visão horizontal em graus (float, default 70.0)
 - debug.show_windows: Mostrar janelas GUI (bool, default true)
 - debug.show_mask: Mostrar máscara HSV (bool, default true)
-- debug.print_heading: Imprimir info de direção (bool, default false)
+- debug.print_heading: Imprimir info de direção no terminal (bool, default false)
+- debug.show_heading_overlay: Quando true, o overlay visual desenha direção + graus acima de cada bbox CONFIRMED (bool, default false)
+- debug.heading_center_deadband_deg: Deadband threshold em graus; dentro desse erro absoluto o rótulo se torna CENTER (float, default 0.5)
 - debug.cone_height_m: Altura real do cone em metros (float ou null, para estimar distância)
 - debug.draw_suspects: Desenhar tracks suspects em amarelo (bool, default false)
 - debug.log_rejections: Registrar rejeições no console (bool, default false)
@@ -1443,6 +1445,7 @@ Desenha bounding boxes, labels, FPS, contadores e informações de debug.
 RESPONSABILIDADES:
 - Desenhar bounding boxes coloridos por track ID
 - Exibir labels com ID, estado e score
+- Renderizar overlay de heading (LEFT/RIGHT/CENTER ±deg) para tracks CONFIRMED quando habilitado
 - Renderizar informações de FPS e contadores
 - Mostrar rejeições (com motivo) se habilitado
 - Exibir mensagem de reload de config temporária
@@ -1519,11 +1522,37 @@ Método: draw(self, frame: np.ndarray, tracks: List[Track], rejects: List[Tuple[
          c. Desenha retângulo:
             - cv2.rectangle(frame, (x,y), (x+w, y+h), cor, espessura=2)
          
-         d. Desenha label acima do retângulo:
-            - Texto: "ID {id} {state.name} avg={avg_score:.2f}"
-            - Posição: (x, y-10) ou (x, 0) se y muito pequeno
-            - Cor: mesma do retângulo
-            - Font: FONT_HERSHEY_SIMPLEX, escala 0.45, espessura 2
+         d. Desenha labels acima do retângulo:
+             
+             Para tracks CONFIRMED com debug.show_heading_overlay habilitado:
+               LINHA 1 (Heading overlay):
+                 - Calcula heading conforme descrito abaixo em "CÁLCULO DE HEADING"
+                 - Texto: "{LEFT|RIGHT|CENTER} {±X.XX}°"
+                   Exemplos: "LEFT -3.12°", "RIGHT +2.45°", "CENTER +0.12°"
+                 - Posição: (x, y-30) ou ajustado se muito próximo da borda superior
+                 - Cor: mesma do retângulo do track
+                 - Font: FONT_HERSHEY_SIMPLEX, escala 0.45, espessura 2
+               
+               LINHA 2 (Info do track):
+                 - Texto: "ID {id} {state.name} avg={avg_score:.2f}"
+                 - Posição: (x, y-10) ou ajustado se muito próximo da borda superior
+                 - Cor: mesma do retângulo
+                 - Font: FONT_HERSHEY_SIMPLEX, escala 0.45, espessura 2
+             
+             Para tracks CONFIRMED com debug.show_heading_overlay desabilitado:
+               LINHA ÚNICA (Info do track):
+                 - Texto: "ID {id} {state.name} avg={avg_score:.2f}"
+                 - Posição: (x, y-10) ou (x, 0) se y muito pequeno
+                 - Cor: mesma do retângulo
+                 - Font: FONT_HERSHEY_SIMPLEX, escala 0.45, espessura 2
+             
+             Para tracks SUSPECT (se draw_suspects habilitado):
+               LINHA ÚNICA (Info do track):
+                 - Texto: "ID {id} {state.name} avg={avg_score:.2f}"
+                 - Posição: (x, y-10)
+                 - Cor: Amarelo (0,255,255)
+                 - Font: FONT_HERSHEY_SIMPLEX, escala 0.45, espessura 2
+                 - Nota: SUSPECT tracks NÃO recebem heading overlay, apenas CONFIRMED
     
     6. Rejeições (se show_rejection_reason habilitado):
        Para cada (bbox, motivo) em rejects:
@@ -1536,6 +1565,59 @@ Método: draw(self, frame: np.ndarray, tracks: List[Track], rejects: List[Tuple[
             - Cor: Vermelha (0,0,255)
             - Font: FONT_HERSHEY_SIMPLEX, escala 0.5, espessura 2
 
+CÁLCULO DE HEADING (para overlay visual):
+-----------------------------------------
+
+Quando debug.show_heading_overlay está habilitado, o visualizador calcula e exibe
+a direção (LEFT/RIGHT/CENTER) e o erro angular em graus para cada track CONFIRMED.
+Este cálculo segue exatamente a mesma lógica implementada em app._debug_print_heading
+(que imprime no terminal), mas aplicado ao overlay visual.
+
+MATEMÁTICA DO HEADING:
+
+1. ENTRADA:
+   - track.cx: Centro horizontal do bbox (em pixels)
+   - frame_w: Largura do frame (em pixels)
+   - camera.hfov_deg: Campo de visão horizontal da câmera (graus, default 70.0)
+
+2. VALIDAÇÃO DE HFOV:
+   - Range válido: 10.0 <= hfov_deg <= 170.0
+   - Se hfov_deg fora do range ou não configurado: usa fallback de 70.0
+
+3. CÁLCULO DO FOCAL LENGTH (modelo pinhole):
+   - frame_center_x = frame_w / 2.0
+   - hfov_rad = hfov_deg * (π / 180)
+   - focal_px = (frame_w / 2.0) / tan(hfov_rad / 2.0)
+
+4. CÁLCULO DO ERRO ANGULAR:
+   - err_px = track.cx - frame_center_x  (erro horizontal em pixels)
+   - err_deg = atan(err_px / focal_px) * (180 / π)  (conversão para graus)
+
+5. DECISÃO DE DIREÇÃO:
+   - Se |err_deg| < debug.heading_center_deadband_deg:
+     + Direção = "CENTER"
+   - Senão, se err_deg > 0:
+     + Direção = "RIGHT"  (cone à direita do centro)
+   - Senão:
+     + Direção = "LEFT"   (cone à esquerda do centro)
+
+6. FORMATAÇÃO DO LABEL:
+   - err_deg sempre mostrado com sinal e 2 decimais: "+3.12°", "-1.80°", "+0.12°"
+   - Label final: "{Direção} {err_deg}°"
+   - Exemplos:
+     + "LEFT -3.12°"
+     + "RIGHT +2.45°"
+     + "CENTER +0.12°"
+
+NOTAS IMPORTANTES:
+- Este cálculo é idêntico ao usado em app._debug_print_heading (terminal)
+- A diferença é que debug.print_heading controla logs de terminal, enquanto
+  debug.show_heading_overlay controla overlay visual
+- Ambos podem ser habilitados independentemente
+- O overlay visual é desenhado apenas para tracks CONFIRMED
+- O parâmetro debug.heading_center_deadband_deg (default 0.5) define o threshold
+  em graus para considerar um cone como CENTER (dentro da deadband)
+
 CONEXÕES COM OUTROS COMPONENTES:
 - USADO POR: app.App (self.vis.draw())
 - IMPORTA: tracker.Track, utils.ConeState
@@ -1544,6 +1626,9 @@ CONEXÕES COM OUTROS COMPONENTES:
 PARÂMETROS CONFIGURÁVEIS:
 - debug.draw_suspects: Desenhar tracks SUSPECT em amarelo (bool, default false)
 - debug.show_rejection_reason: Desenhar rejeições em vermelho (bool, default false)
+- debug.show_heading_overlay: Quando true, desenha linha de heading (LEFT/RIGHT/CENTER ±deg) acima de cada bbox CONFIRMED (bool, default false)
+- debug.heading_center_deadband_deg: Deadband threshold em graus; dentro desse erro absoluto o rótulo se torna CENTER (float, default 0.5)
+- camera.hfov_deg: Campo de visão horizontal da câmera em graus (float, default 70.0, range válido 10-170)
 
 DEPENDÊNCIAS EXTERNAS:
 - cv2: putText, rectangle
@@ -1557,6 +1642,9 @@ PONTOS DE ATENÇÃO:
 4. REJEIÇÕES: Pode poluir visualização se muitas. Usar apenas para debug.
 5. FPS POSITION: Informações sempre desenhadas, mesmo se show_windows=false
    (importante para output_video_path)
+6. HEADING OVERLAY: Apenas para tracks CONFIRMED quando show_heading_overlay=true.
+   Tracks SUSPECT nunca recebem heading overlay. O overlay usa duas linhas acima
+   do bbox, requerendo mais espaço vertical.
 
 LIMITAÇÕES:
 - Cores fixas (8 cores apenas, repetem após 8 tracks)
@@ -1887,10 +1975,20 @@ PONTOS DE INTEGRAÇÃO:
    - Configuração: camera.video_path ou camera.index
 
 2. SAÍDA DE CONTROLE (PARA NAVEGAÇÃO):
-   - Interface: Logs HEADING_DBG (stdout)
+   - Interface principal: Logs HEADING_DBG (stdout)
    - Formato: Texto estruturado parseável
    - Dados: track_id, cx, err_px, err_deg, bbox_h, est_dist, avg_score
    - Uso: Sistema de navegação pode parsear logs para decisões de steering
+   - Controle: Habilitado via debug.print_heading (terminal logs)
+   
+   - Interface visual alternativa: Overlay de heading em vídeo
+   - Formato: Texto renderizado sobre bboxes CONFIRMED
+   - Dados: LEFT/RIGHT/CENTER ±X.XX° por track
+   - Uso: Visualização em tempo real ou gravação de vídeo anotado
+   - Controle: Habilitado via debug.show_heading_overlay (overlay visual)
+   
+   Nota: debug.print_heading e debug.show_heading_overlay são independentes e
+   podem ser habilitados separadamente ou em conjunto.
 
 3. SAÍDA DE VÍDEO:
    - Interface: cv2.VideoWriter
@@ -2759,6 +2857,7 @@ INTEGRAÇÃO COM NAVEGAÇÃO/AUTONOMIA:
 
 INTERFACE 1: Logs HEADING_DBG (stdout)
   Formato: Texto parseável
+  Controle: Habilitado via debug.print_heading=true
   Exemplo:
     "HEADING_DBG: detected=True id=2 cx=520.5 err_px=+40.5 err_deg=+3.12 bbox_h=85 est_dist=2.45m avg_score=0.68"
   
@@ -2805,6 +2904,19 @@ INTERFACE 1: Logs HEADING_DBG (stdout)
                 steering_angle = -data['err_deg']  # Inverter para correção
                 send_steering_command(steering_angle)
     ```
+  
+  NOTA - Overlay Visual Alternativo:
+    Além dos logs de terminal (debug.print_heading), o sistema também oferece
+    overlay visual de heading habilitado via debug.show_heading_overlay=true.
+    Quando habilitado, desenha "LEFT/RIGHT/CENTER ±X.XX°" acima de cada bbox
+    CONFIRMED. Útil para:
+      - Gravação de vídeo anotado (com camera.output_video_path)
+      - Visualização em tempo real (com debug.show_windows=true)
+      - Debug visual sem poluir logs de terminal
+    
+    Os dois modos (terminal e overlay) são independentes e podem ser usados
+    separadamente ou em conjunto. A matemática de cálculo de heading é idêntica
+    em ambos os casos (ver seção "CÁLCULO DE HEADING" em visualizer.py).
 
 INTERFACE 2: ROS Node (NÃO IMPLEMENTADO - PROPOSTA)
   Criar nó ROS que publica detecções:
