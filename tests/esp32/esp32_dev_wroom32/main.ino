@@ -16,7 +16,7 @@
 
 const uint32_t BAUD_RATE = 115200;
 const int MAX_FIELDS = 20;
-const char *NO_TARGET_PREFIX = "ACK,NO_TARGET,,,";  // empty track_id, err_norm, err_deg to align with ACK,OK format
+const char *NO_TARGET_PREFIX = "ACK,NO_TARGET,,,";  // empty track_id, err_norm, err_deg to align with ACK,OK,<track_id>,<err_norm>,<err_deg>,<ts_ms>
 
 int splitCsv(const String &line, String *outFields, int maxFields) {
   int fieldIndex = 0;
@@ -45,7 +45,7 @@ void setup() {
 
 void loop() {
   if (!Serial.available()) {
-    delay(2);
+    delay(10);
     return;
   }
   String line = Serial.readStringUntil('\n');

@@ -32,6 +32,7 @@ if _serial is not None:
     )
 else:
     SERIAL_EXCEPTIONS = (OSError, RuntimeError)
+OPEN_EXCEPTIONS = SERIAL_EXCEPTIONS + (ValueError,)
 
 ACK_PREFIX = "ACK"
 DEFAULT_DEVICE = "/dev/ttyUSB0"
@@ -179,7 +180,7 @@ def send_csv_file(
         return stats
     try:
         serial_conn = module.Serial(device, baudrate=baud, timeout=DEFAULT_TIMEOUT_S, write_timeout=DEFAULT_TIMEOUT_S)
-    except (*SERIAL_EXCEPTIONS, ValueError) as exc:
+    except OPEN_EXCEPTIONS as exc:
         print(f"⚠️ Failed to open serial port {device}: {exc}")
         stats.errors += 1
         return stats
