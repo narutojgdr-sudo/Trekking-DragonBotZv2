@@ -52,9 +52,30 @@ debug:
   # Export debug CSV logs per frame
   csv_export:
     enabled: false
-    output_dir: "logs"
+    csv_dir: "logs/csv"
     filename_pattern: "run_{source}_{start_ts}.csv"
     flush_every_frames: 10
+    include_header: true
+    mode: "normalized"
+    fields:
+      - frame_idx
+      - ts_wallclock_ms
+      - ts_source_ms
+      - source
+      - detected
+      - target_id
+      - cx
+      - cy
+      - err_px
+      - err_norm
+      - err_deg
+      - bbox_h
+      - est_dist_m
+      - avg_score
+      - fps
+    normalize:
+      rule: "none"
+    clamp_range: [-1.0, 1.0]
 
 # Tracking Configuration
 # These settings control how the multi-object tracker associates and confirms cone detections

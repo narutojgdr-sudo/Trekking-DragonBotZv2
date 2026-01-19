@@ -33,6 +33,24 @@ Data da análise: 2026-01-17
 - PRs com citação ambígua: **2**
 - PRs não documentadas: **6**
 
+## Debug CSV export (pré-protótipo)
+
+- **Objetivo:** gerar CSVs normalizados por execução para análise antes do protótipo.
+- **Local padrão:** `debug.csv_export.csv_dir` (default: `logs/csv`).
+- **Formato CSV (header):** `frame_idx,ts_wallclock_ms,ts_source_ms,source,detected,target_id,cx,cy,err_px,err_norm,err_deg,bbox_h,est_dist_m,avg_score,fps`
+- **Exemplo de linha:** `123,1674052345678,1674052345000,video,true,3,480.0,270.0,-120.0,-0.250,-10.12,80,2.53,0.78,29.8`
+- **Nota:** CSV **NÃO** é protocolo final para ESP32 — é para análise pré‑protótipo.
+- **Habilitar:** `debug.csv_export.enabled=true` no `cone_config.yaml`.
+
+## Test scripts: ESP32 integration (tests/exec, tests/esp32)
+
+- **Sender (host):** `tests/exec/send_csv.py` envia linhas CSV via serial e imprime ACKs.
+- **Sketch (ESP32):** `tests/esp32/esp32_dev_wroom32/main.ino` lê CSV e responde `ACK`.
+- **Teste manual rápido:**
+  1. Gere um CSV (`debug.csv_export.enabled=true`).
+  2. Flash no ESP32 e conecte via `/dev/ttyUSB0`.
+  3. Rode: `python3 tests/exec/send_csv.py --device /dev/ttyUSB0 --csv-file logs/csv/run_video_YYYYMMDD.csv`.
+
 ## Recomendações prioritárias (com texto sugerido)
 
 - **[Alta] Atualizar parâmetros críticos do tracker (PR #2)**

@@ -104,7 +104,7 @@ class RunCSVLogger:
             if self._enabled:
                 return self.csv_path
             self._source_label = source_label or "unknown"
-            output_dir = csv_cfg.get("output_dir", "logs")
+            output_dir = csv_cfg.get("csv_dir") or csv_cfg.get("output_dir", "logs")
             flush_setting = csv_cfg.get("flush_every_frames", DEFAULT_FLUSH_EVERY_FRAMES)
             try:
                 self._flush_every_frames = max(1, int(flush_setting))
@@ -117,9 +117,11 @@ class RunCSVLogger:
             filename = _sanitize_filename(filename_pattern.format(source=self._source_label, start_ts=safe_ts), self._source_label, safe_ts)
             candidate = self._unique_filename(output_dir, filename)
             self.csv_path = os.path.join(output_dir, candidate)
+            include_header = csv_cfg.get("include_header", True)
             try:
                 self._handle = open(self.csv_path, "w", encoding="utf-8", newline="")
-                self._handle.write(",".join(CSV_HEADER) + "\n")
+                if include_header:
+                    self._handle.write(",".join(CSV_HEADER) + "\n")
                 self._handle.flush()
             except OSError as exc:
                 self._handle = None

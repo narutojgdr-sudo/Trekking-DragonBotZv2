@@ -1995,12 +1995,20 @@ PONTOS DE INTEGRAÇÃO:
    - Formato: MP4 (codec mp4v)
    - Configuração: camera.output_video_path
 
-4. INTERFACE GUI:
+4. DEBUG CSV EXPORT (PRÉ-PROTÓTIPO):
+   - Objetivo: gerar CSVs normalizados por execução para análise antes do protótipo.
+   - Pasta padrão: debug.csv_export.csv_dir (ex.: logs/csv)
+   - Header CSV: frame_idx,ts_wallclock_ms,ts_source_ms,source,detected,target_id,cx,cy,err_px,err_norm,err_deg,bbox_h,est_dist_m,avg_score,fps
+   - Exemplo: 123,1674052345678,1674052345000,video,true,3,480.0,270.0,-120.0,-0.250,-10.12,80,2.53,0.78,29.8
+   - Nota: CSV NÃO é protocolo final para ESP32 — uso exclusivo pré‑protótipo.
+   - Habilitar: debug.csv_export.enabled=true
+ 
+5. INTERFACE GUI:
    - Interface: cv2.imshow, cv2.waitKey
    - Janelas: "Tracker", "Mask" (opcional)
    - Controles: 'q' (quit), 's' (save config), 'r' (reload)
-
-5. CONFIGURAÇÃO EXTERNA:
+ 
+6. CONFIGURAÇÃO EXTERNA:
    - Interface: Arquivo YAML (cone_config.yaml)
    - Hot-reload: Detecta mudanças via mtime, recarrega automaticamente
 
@@ -2631,6 +2639,16 @@ O repositório possui testes em /tests/:
   - test_streamlit_formatting.py: Testes de formatação (2571 bytes)
   - test_video_input.py: Testes de entrada de vídeo (5541 bytes)
   - test_video_output.py: Testes de saída de vídeo (9193 bytes)
+
+TEST SCRIPTS: ESP32 INTEGRATION (tests/exec, tests/esp32)
+----------------------------------------------------------
+
+- tests/exec/send_csv.py: envia CSV via serial (115200) e imprime ACKs recebidos.
+- tests/esp32/esp32_dev_wroom32/main.ino: sketch Arduino que lê CSV e responde ACK/NO_TARGET.
+- Como testar manualmente:
+  1. Habilitar debug.csv_export.enabled=true e gerar CSV (logs/csv).
+  2. Flash no ESP32 (Arduino IDE/CLI ou PlatformIO).
+  3. Rodar: python3 tests/exec/send_csv.py --device /dev/ttyUSB0 --csv-file logs/csv/run_*.csv
 
 TESTES UNITÁRIOS RECOMENDADOS (POR SCRIPT):
 -------------------------------------------
@@ -3499,4 +3517,3 @@ Para atualizações deste roadmap, regenerar com base no código atual usando:
 Última atualização: 2026-01-15
 Versão do roadmap: 1.0
 Autor: narutojgdr-sudo (agent-generated)
-

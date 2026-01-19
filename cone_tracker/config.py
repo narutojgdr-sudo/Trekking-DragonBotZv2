@@ -42,7 +42,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "run_log_filename_pattern": "run_{source}_{start_ts}.jsonl",
         "csv_export": {
             "enabled": False,
-            "output_dir": "logs",
+            "csv_dir": "logs/csv",
+            "output_dir": "logs/csv",  # backward-compatible alias for csv_dir (csv_dir takes precedence)
             "filename_pattern": "run_{source}_{start_ts}.csv",
             "flush_every_frames": 10,
         },
