@@ -77,6 +77,7 @@ void loop() {
     Serial.print(",");
     Serial.println(tsMs);
   } else {
+    // Mantém três campos vazios para alinhar com ACK,OK,<id>,<err_norm>,<err_deg>,<ts_ms>
     Serial.print("ACK,NO_TARGET,,,");
     Serial.println(tsMs);
   }

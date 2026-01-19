@@ -112,18 +112,25 @@ def _read_response(serial_conn) -> str:
     return str(raw).strip()
 
 
+def _write_payload(serial_conn, payload: str, warn: bool = True) -> bool:
+    try:
+        serial_conn.write(payload.encode("utf-8"))
+        if hasattr(serial_conn, "flush"):
+            serial_conn.flush()
+        return True
+    except Exception as exc:
+        if warn:
+            print(f"⚠️ Failed to write to serial: {exc}")
+        return False
+
+
 def send_lines(serial_conn, lines: Iterable[str], rate_hz: float, retry_on_nack: bool) -> SendStats:
     stats = SendStats()
     delay_s = 1.0 / rate_hz if rate_hz > 0 else 0.0
     for line in lines:
         payload = f"{line}\n"
-        try:
-            serial_conn.write(payload.encode("utf-8"))
-            if hasattr(serial_conn, "flush"):
-                serial_conn.flush()
-        except Exception as exc:
+        if not _write_payload(serial_conn, payload):
             stats.errors += 1
-            print(f"⚠️ Failed to write to serial: {exc}")
             continue
         stats.sent += 1
         response = _read_response(serial_conn)
@@ -134,11 +141,7 @@ def send_lines(serial_conn, lines: Iterable[str], rate_hz: float, retry_on_nack:
         else:
             stats.errors += 1
             if retry_on_nack:
-                try:
-                    serial_conn.write(payload.encode("utf-8"))
-                    if hasattr(serial_conn, "flush"):
-                        serial_conn.flush()
-                except Exception:
+                if not _write_payload(serial_conn, payload, warn=False):
                     stats.errors += 1
         if delay_s > 0:
             time.sleep(delay_s)
