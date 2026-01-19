@@ -16,7 +16,7 @@ from typing import Iterable, List, Optional, Sequence
 
 try:
     import serial as _serial
-except ImportError:  # pragma: no cover - handled at runtime
+except ImportError:  # pragma: no cover
     _serial = None
 
 ACK_PREFIX = "ACK"
