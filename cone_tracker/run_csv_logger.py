@@ -104,11 +104,8 @@ class RunCSVLogger:
             if self._enabled:
                 return self.csv_path
             self._source_label = source_label or "unknown"
-            if "csv_dir" in csv_cfg:
-                output_dir = csv_cfg.get("csv_dir")
-                if not output_dir:
-                    output_dir = csv_cfg.get("output_dir", "logs")
-            else:
+            output_dir = csv_cfg.get("csv_dir") if "csv_dir" in csv_cfg else csv_cfg.get("output_dir", "logs")
+            if output_dir == "":
                 output_dir = csv_cfg.get("output_dir", "logs")
             flush_setting = csv_cfg.get("flush_every_frames", DEFAULT_FLUSH_EVERY_FRAMES)
             try:

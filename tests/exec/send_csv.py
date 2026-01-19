@@ -19,6 +19,20 @@ try:
 except ImportError:  # pragma: no cover
     _serial = None
 
+if _serial is not None:
+    SERIAL_EXCEPTIONS = tuple(
+        exc
+        for exc in (
+            getattr(_serial, "SerialException", None),
+            getattr(_serial, "SerialTimeoutException", None),
+            OSError,
+            RuntimeError,
+        )
+        if exc is not None
+    )
+else:
+    SERIAL_EXCEPTIONS = (OSError, RuntimeError)
+
 ACK_PREFIX = "ACK"
 DEFAULT_DEVICE = "/dev/ttyUSB0"
 DEFAULT_BAUD = 115200
@@ -100,7 +114,7 @@ def iter_csv_lines(csv_path: Path, raw: bool, repeat: bool) -> Iterable[str]:
 def _read_response(serial_conn) -> str:
     try:
         raw = serial_conn.readline()
-    except Exception:
+    except SERIAL_EXCEPTIONS:
         return ""
     if not raw:
         return ""
@@ -118,7 +132,7 @@ def _write_payload(serial_conn, payload: str, warn: bool = True) -> bool:
         if hasattr(serial_conn, "flush"):
             serial_conn.flush()
         return True
-    except Exception as exc:
+    except SERIAL_EXCEPTIONS as exc:
         if warn:
             print(f"⚠️ Failed to write to serial: {exc}")
         return False
@@ -165,7 +179,7 @@ def send_csv_file(
         return stats
     try:
         serial_conn = module.Serial(device, baudrate=baud, timeout=DEFAULT_TIMEOUT_S, write_timeout=DEFAULT_TIMEOUT_S)
-    except Exception as exc:
+    except (*SERIAL_EXCEPTIONS, ValueError) as exc:
         print(f"⚠️ Failed to open serial port {device}: {exc}")
         stats.errors += 1
         return stats
