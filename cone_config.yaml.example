@@ -39,3 +39,30 @@ debug:
   show_mask: true
   draw_suspects: true            # Mostrar tracks em estado SUSPECT (amarelo)
   show_rejection_reason: true    # Mostrar motivo de rejeições
+  # Exportação CSV de debug (pré-protótipo)
+  csv_export:
+    enabled: false
+    csv_dir: "logs/csv"
+    filename_pattern: "run_{source}_{start_ts}.csv"
+    flush_every_frames: 10
+    include_header: true
+    mode: "normalized"
+    fields:
+      - frame_idx
+      - ts_wallclock_ms
+      - ts_source_ms
+      - source
+      - detected
+      - target_id
+      - cx
+      - cy
+      - err_px
+      - err_norm
+      - err_deg
+      - bbox_h
+      - est_dist_m
+      - avg_score
+      - fps
+    normalize:
+      rule: "none"
+    clamp_range: [-1.0, 1.0]
