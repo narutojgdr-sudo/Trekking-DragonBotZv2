@@ -402,6 +402,11 @@ debug:
   export_run_log: true              # Exportar JSONL por frame
   run_log_dir: "logs"               # Diretório do run log
   run_log_filename_pattern: "run_{source}_{start_ts}.jsonl"
+  csv_export:
+    enabled: false                  # Exportar CSV por frame
+    output_dir: "logs"
+    filename_pattern: "run_{source}_{start_ts}.csv"
+    flush_every_frames: 10
 ```
 
 ### Entendendo os Logs
