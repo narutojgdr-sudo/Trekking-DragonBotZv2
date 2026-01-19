@@ -12,6 +12,7 @@ from typing import Optional
 import cv2
 
 from .utils import ConeState
+from .run_csv_logger import RunCSVLogger
 from .config import load_config, save_config, watch_config
 from .detector import ConeDetector
 from .tracker import MultiConeTracker
@@ -45,8 +46,8 @@ class SourceInfo:
 class App:
     """Main application for cone detection and tracking."""
     
-    def __init__(self):
-        self.config = load_config()
+    def __init__(self, config: Optional[dict] = None):
+        self.config = config if config is not None else load_config()
         self.source_label = None
         self.using_video = False
         self.video_path = ""
@@ -56,6 +57,7 @@ class App:
         self.run_log_path = None
         self.run_start_ts = None
         self.frame_idx = 0
+        self.csv_logger = RunCSVLogger()
         self._video_ts_fallback_logged = False
         self._playback_start_ts = None
         self._playback_frame_duration = None
@@ -228,7 +230,7 @@ class App:
             
             logger.info(msg)
 
-    def run(self):
+    def run(self, max_frames: Optional[int] = None):
         """Run the main application loop."""
         cam = self.config["camera"]
         using_video = self.using_video
@@ -273,6 +275,10 @@ class App:
         self.run_start_ts = self._iso_timestamp()
         if self.config["debug"].get("export_run_log", False):
             self._init_run_log()
+        try:
+            self.csv_logger.open_if_enabled(self.config, self.source_label, self.run_start_ts)
+        except Exception as exc:
+            self._log_with_source(logging.WARNING, f"⚠️ Failed to init CSV export: {exc}")
 
         t_last = time.time()
         fail_count = 0
@@ -347,8 +353,7 @@ class App:
                 fps = 1.0 / (now - t_last + 1e-6)
                 t_last = now
                 ts_wallclock_ms = int(now * 1000)
-
-                if self.run_log_handle:
+                if self.run_log_handle or self.csv_logger.enabled:
                     ts_source_ms = ts_wallclock_ms
                     if using_video:
                         pos_msec = cap.get(cv2.CAP_PROP_POS_MSEC)
@@ -367,41 +372,57 @@ class App:
                                     self._log_with_source(logging.WARNING, "CAP_PROP_POS_MSEC unavailable and fps invalid; using wallclock timestamp")
                                     self._video_ts_fallback_logged = True
 
-                    focal_px = self._focal_px(cam["process_width"])
-                    center_x = cam["process_width"] / 2.0
-                    cone_height_m = self.config["debug"].get("cone_height_m", None)
-                    track_payload = []
-                    for track in tracks_for_control:
-                        err_px = track.cx - center_x
-                        angle_deg = math.degrees(math.atan(err_px / focal_px))
-                        est_dist_m = None
-                        if cone_height_m is not None and track.h > MIN_BBOX_HEIGHT_FOR_DISTANCE:
-                            est_dist_m = (cone_height_m * focal_px) / track.h
-                        track_payload.append({
-                            "id": track.track_id,
-                            "bbox": list(track.bbox()),
-                            "cx": float(track.cx),
-                            "cy": float(track.cy),
-                            "err_px": float(err_px),
-                            "err_deg": float(angle_deg),
-                            "bbox_h": int(track.h),
-                            "est_dist_m": None if est_dist_m is None else float(est_dist_m),
-                            "avg_score": float(track.avg_score()),
-                        })
+                    if self.run_log_handle:
+                        focal_px = self._focal_px(cam["process_width"])
+                        center_x = cam["process_width"] / 2.0
+                        cone_height_m = self.config["debug"].get("cone_height_m", None)
+                        track_payload = []
+                        for track in tracks_for_control:
+                            err_px = track.cx - center_x
+                            angle_deg = math.degrees(math.atan(err_px / focal_px))
+                            est_dist_m = None
+                            if cone_height_m is not None and track.h > MIN_BBOX_HEIGHT_FOR_DISTANCE:
+                                est_dist_m = (cone_height_m * focal_px) / track.h
+                            track_payload.append({
+                                "id": track.track_id,
+                                "bbox": list(track.bbox()),
+                                "cx": float(track.cx),
+                                "cy": float(track.cy),
+                                "err_px": float(err_px),
+                                "err_deg": float(angle_deg),
+                                "bbox_h": int(track.h),
+                                "est_dist_m": None if est_dist_m is None else float(est_dist_m),
+                                "avg_score": float(track.avg_score()),
+                            })
 
-                    record = {
-                        "run_start_ts": self.run_start_ts,
-                        "frame_idx": self.frame_idx,
-                        "ts_wallclock_ms": ts_wallclock_ms,
-                        "ts_source_ms": ts_source_ms,
-                        "source": self.source_label,
-                        "detected": bool(tracks_for_control),
-                        "selected_target_id": None,
-                        "tracks": track_payload,
-                        "rejects_count": len(rejects),
-                        "fps": float(fps),
-                    }
-                    self._write_run_log(record)
+                        record = {
+                            "run_start_ts": self.run_start_ts,
+                            "frame_idx": self.frame_idx,
+                            "ts_wallclock_ms": ts_wallclock_ms,
+                            "ts_source_ms": ts_source_ms,
+                            "source": self.source_label,
+                            "detected": bool(tracks_for_control),
+                            "selected_target_id": None,
+                            "tracks": track_payload,
+                            "rejects_count": len(rejects),
+                            "fps": float(fps),
+                        }
+                        self._write_run_log(record)
+
+                    if self.csv_logger.enabled:
+                        try:
+                            self.csv_logger.log_frame(
+                                frame_idx=self.frame_idx,
+                                frame_w=cam["process_width"],
+                                tracks=tracks_for_control,
+                                ts_wallclock_ms=ts_wallclock_ms,
+                                ts_source_ms=ts_source_ms,
+                                fps=fps,
+                                hfov_deg=cam.get("hfov_deg", HFOV_FALLBACK_DEG),
+                                cone_height_m=self.config["debug"].get("cone_height_m", None),
+                            )
+                        except Exception as exc:
+                            self._log_with_source(logging.WARNING, f"⚠️ CSV log error: {exc}")
 
                 # Only CONFIRMED tracks by default (cfg.draw_suspects controls)
                 tracks_to_draw = self.tracker.tracks if self.config["debug"].get("draw_suspects", False) else self.tracker.confirmed_tracks()
@@ -437,6 +458,8 @@ class App:
                         time.sleep(sleep_time)
 
                 self.frame_idx += 1
+                if max_frames is not None and self.frame_idx >= max_frames:
+                    break
         finally:
             cap.release()
             if video_writer is not None:
@@ -449,6 +472,13 @@ class App:
                     self._log_with_source(logging.INFO, f"✅ Run log exported to: {self.run_log_path}")
                 except Exception:
                     self._log_with_source(logging.WARNING, "⚠️ Failed to close run log")
+            if self.csv_logger.enabled:
+                try:
+                    self.csv_logger.close()
+                    if self.csv_logger.csv_path:
+                        self._log_with_source(logging.INFO, f"✅ CSV exported to: {self.csv_logger.csv_path}")
+                except Exception:
+                    self._log_with_source(logging.WARNING, "⚠️ Failed to close CSV export")
             try:
                 cv2.destroyAllWindows()
             except (cv2.error, Exception):

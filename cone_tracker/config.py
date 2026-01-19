@@ -40,6 +40,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "export_run_log": False,
         "run_log_dir": "logs",
         "run_log_filename_pattern": "run_{source}_{start_ts}.jsonl",
+        "csv_export": {
+            "enabled": False,
+            "output_dir": "logs",
+            "filename_pattern": "run_{source}_{start_ts}.csv",
+            "flush_every_frames": 10,
+        },
     },
     "hsv_orange": {
         "low_1": [0, 90, 90],

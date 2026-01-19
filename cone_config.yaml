@@ -49,6 +49,13 @@ debug:
   # Show rejection reasons in visualizer overlay
   show_rejection_reason: false
 
+  # Export debug CSV logs per frame
+  csv_export:
+    enabled: false
+    output_dir: "logs"
+    filename_pattern: "run_{source}_{start_ts}.csv"
+    flush_every_frames: 10
+
 # Tracking Configuration
 # These settings control how the multi-object tracker associates and confirms cone detections
 tracking:
