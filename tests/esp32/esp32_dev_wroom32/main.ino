@@ -1,7 +1,7 @@
 // ESP32 test sketch (Arduino)
 // - Reads newline-terminated CSV from Serial at 115200
 // - Parses CSV from run_csv_logger (frame_idx, ts_wallclock_ms, ts_source_ms, source, detected, target_id, cx, cy, err_px, err_norm, err_deg, bbox_h, est_dist_m, avg_score, fps)
-// - Sends back ACK lines: "ACK,OK,<track_id>,<err_norm>,<err_deg>,<ts_ms>" or "ACK,NO_TARGET,,,,<ts_ms>"
+// - Sends back ACK lines: "ACK,OK,<track_id>,<err_norm>,<err_deg>,<ts_ms>" or "ACK,NO_TARGET,,,<ts_ms>"
 //
 // Build/flash examples:
 //  - Arduino IDE: select board "ESP32 Dev Module" and upload
@@ -77,7 +77,7 @@ void loop() {
     Serial.print(",");
     Serial.println(tsMs);
   } else {
-    // Mantém três campos vazios para alinhar com ACK,OK,<id>,<err_norm>,<err_deg>,<ts_ms>
+    // Keep three empty fields to align with ACK,OK,<id>,<err_norm>,<err_deg>,<ts_ms>
     Serial.print("ACK,NO_TARGET,,,");
     Serial.println(tsMs);
   }

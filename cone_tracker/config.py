@@ -43,7 +43,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "csv_export": {
             "enabled": False,
             "csv_dir": "logs/csv",
-            "output_dir": "logs/csv",
+            "output_dir": "logs/csv",  # backward-compatible alias for csv_dir
             "filename_pattern": "run_{source}_{start_ts}.csv",
             "flush_every_frames": 10,
         },
