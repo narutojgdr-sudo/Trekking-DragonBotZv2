@@ -29,6 +29,16 @@ class Visualizer:
     def _color(self, track_id: int) -> Tuple[int, int, int]:
         """Get color for track ID."""
         return self.COLORS[track_id % len(self.COLORS)]
+
+    @staticmethod
+    def _normalize_mask(mask: np.ndarray) -> np.ndarray:
+        if mask.dtype == np.bool_:
+            return mask.astype(np.uint8) * 255
+        if mask.dtype == np.uint8:
+            return mask
+        if np.issubdtype(mask.dtype, np.floating):
+            return np.clip(mask * 255 if mask.max() <= 1.0 else mask, 0, 255).astype(np.uint8)
+        return mask.astype(np.uint8)
     
     def _compute_heading_info(self, track: Track, frame_w: int) -> Tuple[str, float]:
         """
@@ -172,3 +182,8 @@ class Visualizer:
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
         return frame
+
+    def show(self, frame: np.ndarray, mask: np.ndarray, show_mask: bool) -> None:
+        cv2.imshow("Tracker", frame)
+        if show_mask and mask is not None:
+            cv2.imshow("Mask", self._normalize_mask(mask))
