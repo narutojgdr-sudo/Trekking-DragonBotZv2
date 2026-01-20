@@ -16,7 +16,7 @@ from .utils import ConeState
 class Visualizer:
     """Visualize cone detection and tracking results."""
     
-    MASK_NORMALIZED_EPS = 1e-6
+    MASK_NORMALIZED_EPS = 1e-3
     COLORS = [
         (0, 255, 0), (0, 200, 255), (255, 0, 0), (255, 255, 0),
         (255, 0, 255), (0, 255, 255), (180, 180, 0), (0, 180, 180),
@@ -38,7 +38,7 @@ class Visualizer:
         if mask.dtype == np.uint8:
             return mask
         if np.issubdtype(mask.dtype, np.floating):
-            if not np.any(mask):
+            if not np.any(mask > 0):
                 return np.zeros(mask.shape, dtype=np.uint8)
             upper = float(np.max(mask))
             is_normalized = upper <= 1.0 + cls.MASK_NORMALIZED_EPS
