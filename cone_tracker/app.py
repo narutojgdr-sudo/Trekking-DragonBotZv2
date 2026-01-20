@@ -88,7 +88,7 @@ class App:
             self._display_ready = False
             self._display_show_mask = False
             return
-        if os.environ.get("DISPLAY") in (None, ""):
+        if not os.environ.get("DISPLAY"):
             self._log_with_source(logging.WARNING, "DISPLAY not set; disabling GUI windows")
             debug_cfg["show_windows"] = False
             debug_cfg["show_mask"] = False
