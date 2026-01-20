@@ -98,6 +98,47 @@ Write per-frame IoU histogram bins (0.0-1.0 in 0.1 steps) to CSV:
 python3 tests/exec/gist_test_runner.py --video path/to/video.mp4 --iou-hist-csv logs/gist_iou_hist.csv
 ```
 
+### Reasons Logging (Default Enabled)
+
+**NEW**: The gist test runner now generates detailed per-frame reasons reports by default!
+
+By default, the runner will:
+- Enable detailed rejection reasons logging (`--log-reasons`)
+- Generate a human-readable `.txt` report with per-frame detection/tracking details (`--reasons-txt`)
+- Save the report to the repository root as `reasons_{timestamp}.txt`
+
+The report includes:
+- **Header**: Run timestamp, configuration summary (HSV ranges, tracking timeouts)
+- **Per-frame sections**: 
+  - Detector: Accepted detections (bbox, score, geometric data) and Rejected candidates (bbox, reason)
+  - Gist: Candidates with geometric validation scores
+  - Tracker: Confirmed/deleted track IDs and track states (CONFIRMED/SUSPECT)
+- **Footer**: Summary statistics (total frames, accepted/rejected counts)
+
+#### Customize Reasons Report
+
+Specify a custom path for the reasons report:
+
+```bash
+python3 tests/exec/gist_test_runner.py --video path/to/video.mp4 --reasons-txt-path ./logs/my_reasons.txt
+```
+
+#### Disable Reasons Logging
+
+If you want to disable reasons logging and report generation:
+
+```bash
+python3 tests/exec/gist_test_runner.py --video path/to/video.mp4 --no-log-reasons --no-reasons-txt
+```
+
+Or configure via `cone_config.yaml`:
+
+```yaml
+debug:
+  log_reasons: false
+  reasons_txt_enabled: false
+```
+
 ### Unit Mode
 
 Run a CI-friendly short pass (forces max 5 frames and disables windows):

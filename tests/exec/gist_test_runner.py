@@ -33,6 +33,8 @@ from cone_tracker.config import load_config
 from cone_tracker.detector import ConeDetector
 from cone_tracker.tracker import MultiConeTracker
 from cone_tracker.visualizer import Visualizer
+from cone_tracker.reasons_writer import ReasonsWriter
+from cone_tracker.utils import ConeState
 
 logger = logging.getLogger(__name__)
 IOU_HIST_BINS = 10
@@ -502,8 +504,42 @@ def main():
         action="store_true",
         help="Unit mode: limit to 5 frames and disable visualization windows"
     )
+    parser.add_argument(
+        "--log-reasons",
+        action="store_true",
+        default=True,
+        help="Enable detailed reasons logging (default: True)"
+    )
+    parser.add_argument(
+        "--no-log-reasons",
+        action="store_true",
+        help="Disable reasons logging"
+    )
+    parser.add_argument(
+        "--reasons-txt",
+        action="store_true",
+        default=True,
+        help="Generate detailed .txt report (default: True)"
+    )
+    parser.add_argument(
+        "--no-reasons-txt",
+        action="store_true",
+        help="Disable .txt report generation"
+    )
+    parser.add_argument(
+        "--reasons-txt-path",
+        type=str,
+        default=None,
+        help="Path for reasons .txt report (default: ./reasons_{timestamp}.txt)"
+    )
     
     args = parser.parse_args()
+    
+    # Handle no-log-reasons and no-reasons-txt overrides
+    if args.no_log_reasons:
+        args.log_reasons = False
+    if args.no_reasons_txt:
+        args.reasons_txt = False
     
     # Setup logging
     logging.basicConfig(
@@ -530,11 +566,23 @@ def main():
         # Override show_windows if requested
         if args.show_windows:
             config["debug"]["show_windows"] = True
+        
+        # Enable rejection reasons if log_reasons is enabled
+        if args.log_reasons:
+            config["debug"]["show_rejection_reason"] = True
 
         if args.unit:
             args.max_frames = 5
             config["debug"]["show_windows"] = False
             logger.info("Unit mode enabled: max_frames=5, show_windows disabled")
+        
+        # Initialize reasons writer if enabled
+        reasons_writer = None
+        if args.reasons_txt:
+            reasons_writer = ReasonsWriter()
+            reasons_writer.set_start_timestamp()
+            reasons_writer.set_config_summary(config)
+            logger.info("Reasons .txt report generation enabled")
         
         # Initialize components
         logger.info("Initializing ConeDetector, MultiConeTracker, Visualizer...")
@@ -640,6 +688,40 @@ def main():
                     tracker.update(tracking_input)
                 except Exception as exc:
                     logger.exception("Tracker update failed at frame %d: %s", frame_idx, exc)
+                
+                # Collect reasons data for this frame if enabled
+                if reasons_writer:
+                    # Collect tracker events (newly confirmed, deleted)
+                    tracker_events = {"confirmed": [], "deleted": []}
+                    # Note: tracker doesn't expose confirmed/deleted events directly,
+                    # we'd need to track state changes. For now, collect current states.
+                    
+                    # Collect track states
+                    confirmed_ids = [t.track_id for t in tracker.tracks if t.state == ConeState.CONFIRMED]
+                    suspect_ids = [t.track_id for t in tracker.tracks if t.state == ConeState.SUSPECT]
+                    track_states = {
+                        "confirmed_ids": confirmed_ids,
+                        "suspect_ids": suspect_ids,
+                    }
+                    
+                    # Prepare gist candidates for logging
+                    gist_candidates_data = []
+                    for bbox, score, meta in gist_scored:
+                        gist_candidates_data.append({
+                            "bbox": bbox,
+                            "score": score,
+                            "reason": f"geometric validation (vertices={meta['vertices']})"
+                        })
+                    
+                    reasons_writer.add_frame_data(
+                        frame_idx=frame_idx,
+                        timestamp_ms=timestamp_ms,
+                        detections=detector_results,
+                        rejects=rejects,
+                        gist_candidates=gist_candidates_data,
+                        tracker_events=tracker_events,
+                        track_states=track_states,
+                    )
                 
                 # === Analysis: Compare gist vs detector ===
                 matched = 0
@@ -773,6 +855,24 @@ def main():
             if iou_hist_file is not None:
                 iou_hist_file.close()
             cv2.destroyAllWindows()
+            
+            # Write reasons report if enabled
+            if reasons_writer:
+                try:
+                    reasons_txt_path = args.reasons_txt_path
+                    if not reasons_txt_path:
+                        # Auto-generate path in repo root
+                        safe_ts = reasons_writer.start_timestamp.replace(":", "-").replace(".", "-")
+                        reasons_txt_path = f"./reasons_{safe_ts}.txt"
+                    
+                    reasons_writer.write_report(
+                        output_path=reasons_txt_path,
+                        csv_path=csv_path,
+                        iou_hist_path=args.iou_hist_csv,
+                    )
+                    logger.info("Reasons report written to: %s", reasons_txt_path)
+                except Exception as exc:
+                    logger.warning("Failed to write reasons report: %s", exc)
         
         # Final statistics
         logger.info("=" * 70)
