@@ -128,6 +128,10 @@ cone_hist.npy
 *.mp4
 *.avi
 
+# Logs and test outputs
+logs/
+*.csv
+
 # Streamlit
 .streamlit/secrets.toml
 streamlit_app/.streamlit/secrets.toml

@@ -345,9 +345,9 @@ def setup_iou_histogram_csv(output_path: str) -> Tuple[csv.writer, Any]:
     try:
         hist_file = open(output_path, "w", newline="")
         writer = csv.writer(hist_file)
-    header = ["frame_idx"] + [
-        f"bin_{i/IOU_HIST_BINS:.1f}_{(i + 1)/IOU_HIST_BINS:.1f}" for i in range(IOU_HIST_BINS)
-    ]
+        header = ["frame_idx"] + [
+            f"bin_{i/IOU_HIST_BINS:.1f}_{(i + 1)/IOU_HIST_BINS:.1f}" for i in range(IOU_HIST_BINS)
+        ]
         writer.writerow(header)
         logger.info("IoU histogram CSV output: %s", output_path)
         return writer, hist_file
