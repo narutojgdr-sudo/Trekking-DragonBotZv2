@@ -37,7 +37,7 @@ class Visualizer:
         if mask.dtype == np.uint8:
             return mask
         if np.issubdtype(mask.dtype, np.floating):
-            upper = float(np.nanmax(mask))
+            upper = float(np.max(mask))
             scale = 255.0 if upper <= 1.0 else 1.0
             return np.clip(mask * scale, 0, 255).astype(np.uint8)
         return mask.astype(np.uint8)

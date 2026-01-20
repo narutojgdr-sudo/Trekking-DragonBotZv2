@@ -111,7 +111,7 @@ class App:
             cv2.waitKey(1)
             self._display_show_mask = self.config["debug"].get("show_mask", False)
         except cv2.error as exc:
-            self._log_with_source(logging.WARNING, f"⚠️ Não foi possível inicializar janelas GUI: {exc}")
+            self._log_with_source(logging.WARNING, f"⚠️ Unable to initialize GUI windows: {exc}")
             self.config["debug"]["show_windows"] = False
             self.config["debug"]["show_mask"] = False
             self._display_ready = False
@@ -147,7 +147,7 @@ class App:
                 cv2.waitKey(1)
                 self._display_show_mask = True
             except cv2.error as exc:
-                self._log_with_source(logging.WARNING, f"⚠️ Não foi possível mostrar janela de máscara: {exc}")
+                self._log_with_source(logging.WARNING, f"⚠️ Unable to show mask window: {exc}")
                 self.config["debug"]["show_windows"] = False
                 self.config["debug"]["show_mask"] = False
                 self._shutdown_display()
