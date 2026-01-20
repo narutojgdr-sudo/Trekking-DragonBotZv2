@@ -123,7 +123,7 @@ class App:
         for name in ("Mask", "Tracker"):
             try:
                 cv2.destroyWindow(name)
-            except (cv2.error, Exception):
+            except cv2.error:
                 pass
         self._display_ready = False
         self._display_show_mask = False
@@ -154,7 +154,7 @@ class App:
         elif not show_mask and self._display_show_mask:
             try:
                 cv2.destroyWindow("Mask")
-            except (cv2.error, Exception):
+            except cv2.error:
                 pass
             self._display_show_mask = False
 
