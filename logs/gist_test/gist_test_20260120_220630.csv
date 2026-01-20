@@ -1,6 +1,0 @@
-frame_idx,timestamp_ms,gist_detections,detector_detections,matched_detections,gist_only,detector_only,gist_bbox_x,gist_bbox_y,gist_bbox_w,gist_bbox_h,gist_score,gist_vertices,detector_bbox_x,detector_bbox_y,detector_bbox_w,detector_bbox_h,detector_score
-0,1768946790175,0,0,0,0,0,,,,,,,,,,,
-1,1768946790206,0,0,0,0,0,,,,,,,,,,,
-2,1768946790238,0,0,0,0,0,,,,,,,,,,,
-3,1768946790270,0,0,0,0,0,,,,,,,,,,,
-4,1768946790300,0,0,0,0,0,,,,,,,,,,,
