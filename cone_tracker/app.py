@@ -29,6 +29,8 @@ RUN_LOG_MAX_FILENAME_ATTEMPTS = 1000
 HFOV_MIN_DEG = 10.0
 HFOV_MAX_DEG = 170.0
 HFOV_FALLBACK_DEG = 70.0
+MIN_FRAME_BGR = (1, 1, 3)
+MIN_FRAME_GRAY = (1, 1)
 
 
 @dataclass(frozen=True)
@@ -105,9 +107,9 @@ class App:
             cv2.namedWindow("Tracker", cv2.WINDOW_NORMAL)
             if self.config["debug"].get("show_mask", False):
                 cv2.namedWindow("Mask", cv2.WINDOW_NORMAL)
-            cv2.imshow("Tracker", np.zeros((1, 1, 3), dtype=np.uint8))
+            cv2.imshow("Tracker", np.zeros(MIN_FRAME_BGR, dtype=np.uint8))
             if self.config["debug"].get("show_mask", False):
-                cv2.imshow("Mask", np.zeros((1, 1), dtype=np.uint8))
+                cv2.imshow("Mask", np.zeros(MIN_FRAME_GRAY, dtype=np.uint8))
             cv2.waitKey(1)
             self._display_show_mask = self.config["debug"].get("show_mask", False)
         except cv2.error as exc:
@@ -143,7 +145,7 @@ class App:
         if show_mask and not self._display_show_mask:
             try:
                 cv2.namedWindow("Mask", cv2.WINDOW_NORMAL)
-                cv2.imshow("Mask", np.zeros((1, 1), dtype=np.uint8))
+                cv2.imshow("Mask", np.zeros(MIN_FRAME_GRAY, dtype=np.uint8))
                 cv2.waitKey(1)
                 self._display_show_mask = True
             except cv2.error as exc:
