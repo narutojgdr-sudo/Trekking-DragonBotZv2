@@ -79,7 +79,8 @@ def test_convex_hull_pointing_up_inverted():
 
 def test_convex_hull_pointing_up_empty():
     """Test that empty hull is rejected."""
-    hull = np.array([], dtype=np.int32)
+    # Empty hull with proper shape but no points
+    hull = np.array([], dtype=np.int32).reshape(0, 1, 2)
     
     result = convex_hull_pointing_up(hull, aspect_thresh=0.8)
     print(f"✓ Test 5: Empty hull -> {result}")

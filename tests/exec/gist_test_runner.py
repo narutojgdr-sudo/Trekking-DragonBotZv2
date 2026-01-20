@@ -290,7 +290,7 @@ def create_video_capture(video_path: str) -> cv2.VideoCapture:
     return cap
 
 
-def setup_csv_output(output_dir: str) -> Tuple[str, csv.DictWriter]:
+def setup_csv_output(output_dir: str) -> Tuple[str, csv.DictWriter, Any]:
     """
     Setup CSV output file for gist test results.
     
@@ -298,7 +298,7 @@ def setup_csv_output(output_dir: str) -> Tuple[str, csv.DictWriter]:
         output_dir: Directory to save CSV (will be created if needed)
         
     Returns:
-        Tuple of (csv_path, csv_writer)
+        Tuple of (csv_path, csv_writer, csv_file)
     """
     os.makedirs(output_dir, exist_ok=True)
     
@@ -484,156 +484,157 @@ def main():
         logger.info("Mode: %s", 
                    "EXPERIMENTAL (gist acceptance)" if args.use_gist_acceptance else "VALIDATION (overlay only)")
         
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                logger.info("End of video or read failure at frame %d", frame_idx)
-                break
-            
-            # Check max frames limit
-            if args.max_frames is not None and frame_idx >= args.max_frames:
-                logger.info("Reached max frames limit: %d", args.max_frames)
-                break
-            
-            # Resize frame to processing resolution
-            frame_resized = cv2.resize(frame, (process_w, process_h))
-            
-            # === Standard Detector Pipeline ===
-            hsv = detector.preprocess(frame_resized)
-            mask = detector.get_mask(frame_resized, hsv)
-            
-            # Run standard detector
-            detector_results, _, rejects = detector.detect(frame_resized)
-            
-            # === Gist Pipeline on same mask ===
-            gist_results = gist_pipeline.process_mask(mask)
-            
-            # Compute gist scores
-            gist_scored = []
-            for approx, hull, bbox in gist_results:
-                score = gist_pipeline.compute_gist_score(approx, hull, bbox)
-                gist_scored.append((bbox, score, {"approx": approx, "hull": hull, "vertices": len(approx)}))
-            
-            # === Decide which detections to track ===
-            if args.use_gist_acceptance:
-                # EXPERIMENTAL: Use gist detections for tracking
-                tracking_input = gist_scored
-            else:
-                # VALIDATION: Use detector detections for tracking
-                tracking_input = detector_results
-            
-            # Update tracker
-            tracker.update(tracking_input)
-            
-            # === Analysis: Compare gist vs detector ===
-            matched = 0
-            gist_only = 0
-            detector_only = 0
-            
-            # Simple matching based on IoU
-            matched_detector = set()
-            matched_gist = set()
-            
-            for i, (gist_bbox, _, _) in enumerate(gist_scored):
-                best_iou = 0.0
-                best_j = -1
-                for j, (det_bbox, _, _) in enumerate(detector_results):
-                    iou = bbox_iou(gist_bbox, det_bbox)
-                    if iou > best_iou:
-                        best_iou = iou
-                        best_j = j
-                
-                if best_iou > 0.3:  # IoU threshold for matching
-                    matched += 1
-                    matched_detector.add(best_j)
-                    matched_gist.add(i)
-            
-            gist_only = len(gist_scored) - len(matched_gist)
-            detector_only = len(detector_results) - len(matched_detector)
-            
-            # === Write CSV row ===
-            timestamp_ms = int(time.time() * 1000)
-            
-            # Write summary row
-            csv_writer.writerow({
-                "frame_idx": frame_idx,
-                "timestamp_ms": timestamp_ms,
-                "gist_detections": len(gist_scored),
-                "detector_detections": len(detector_results),
-                "matched_detections": matched,
-                "gist_only": gist_only,
-                "detector_only": detector_only,
-                "gist_bbox_x": gist_scored[0][0][0] if gist_scored else "",
-                "gist_bbox_y": gist_scored[0][0][1] if gist_scored else "",
-                "gist_bbox_w": gist_scored[0][0][2] if gist_scored else "",
-                "gist_bbox_h": gist_scored[0][0][3] if gist_scored else "",
-                "gist_score": f"{gist_scored[0][1]:.3f}" if gist_scored else "",
-                "gist_vertices": gist_scored[0][2]["vertices"] if gist_scored else "",
-                "detector_bbox_x": detector_results[0][0][0] if detector_results else "",
-                "detector_bbox_y": detector_results[0][0][1] if detector_results else "",
-                "detector_bbox_w": detector_results[0][0][2] if detector_results else "",
-                "detector_bbox_h": detector_results[0][0][3] if detector_results else "",
-                "detector_score": f"{detector_results[0][1]:.3f}" if detector_results else "",
-            })
-            
-            # === Visualization ===
-            # Draw gist detections in magenta
-            for approx, hull, bbox in gist_results:
-                x, y, w, h = bbox
-                cv2.rectangle(frame_resized, (x, y), (x + w, y + h), (255, 0, 255), 2)
-                cv2.putText(frame_resized, "GIST", (x, y - 5),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1)
-                # Draw convex hull
-                cv2.drawContours(frame_resized, [hull], 0, (255, 0, 255), 1)
-            
-            # Draw standard detector detections in cyan
-            for (det_bbox, det_score, _) in detector_results:
-                x, y, w, h = det_bbox
-                cv2.rectangle(frame_resized, (x, y), (x + w, y + h), (255, 255, 0), 2)
-                cv2.putText(frame_resized, f"DET {det_score:.2f}", (x, y - 5),
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
-            
-            # Draw tracks using visualizer
-            frame_vis = visualizer.draw(frame_resized, tracker.tracks, rejects, fps_avg)
-            
-            # Add info overlay
-            cv2.putText(frame_vis, f"Frame: {frame_idx}/{total_frames}", (10, 30),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            cv2.putText(frame_vis, f"Gist: {len(gist_scored)} | Detector: {len(detector_results)} | Matched: {matched}",
-                       (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-            
-            mode_text = "EXPERIMENTAL MODE" if args.use_gist_acceptance else "VALIDATION MODE"
-            cv2.putText(frame_vis, mode_text, (10, 90),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-            
-            # Show windows if enabled
-            if config["debug"]["show_windows"]:
-                cv2.imshow("Gist Test Runner", frame_vis)
-                cv2.imshow("Mask", mask)
-                
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q'):
-                    logger.info("User requested quit")
+        try:
+            while True:
+                ret, frame = cap.read()
+                if not ret:
+                    logger.info("End of video or read failure at frame %d", frame_idx)
                     break
-                elif key == ord(' '):
-                    logger.info("Paused - press any key to continue")
-                    cv2.waitKey(0)
-            
-            # Update FPS
-            frame_idx += 1
-            elapsed = time.time() - start_time
-            fps_avg = frame_idx / elapsed if elapsed > 0 else 0.0
-            
-            # Progress log every 30 frames
-            if frame_idx % 30 == 0:
-                logger.info("Frame %d/%d (%.1f fps) - Gist: %d, Detector: %d, Matched: %d",
-                           frame_idx, total_frames, fps_avg, len(gist_scored), 
-                           len(detector_results), matched)
-        
-        # Cleanup
-        cap.release()
-        csv_file.close()
-        cv2.destroyAllWindows()
+                
+                # Check max frames limit
+                if args.max_frames is not None and frame_idx >= args.max_frames:
+                    logger.info("Reached max frames limit: %d", args.max_frames)
+                    break
+                
+                # Resize frame to processing resolution
+                frame_resized = cv2.resize(frame, (process_w, process_h))
+                
+                # === Standard Detector Pipeline ===
+                hsv = detector.preprocess(frame_resized)
+                mask = detector.get_mask(frame_resized, hsv)
+                
+                # Run standard detector
+                detector_results, _, rejects = detector.detect(frame_resized)
+                
+                # === Gist Pipeline on same mask ===
+                gist_results = gist_pipeline.process_mask(mask)
+                
+                # Compute gist scores
+                gist_scored = []
+                for approx, hull, bbox in gist_results:
+                    score = gist_pipeline.compute_gist_score(approx, hull, bbox)
+                    gist_scored.append((bbox, score, {"approx": approx, "hull": hull, "vertices": len(approx)}))
+                
+                # === Decide which detections to track ===
+                if args.use_gist_acceptance:
+                    # EXPERIMENTAL: Use gist detections for tracking
+                    tracking_input = gist_scored
+                else:
+                    # VALIDATION: Use detector detections for tracking
+                    tracking_input = detector_results
+                
+                # Update tracker
+                tracker.update(tracking_input)
+                
+                # === Analysis: Compare gist vs detector ===
+                matched = 0
+                gist_only = 0
+                detector_only = 0
+                
+                # Simple matching based on IoU
+                matched_detector = set()
+                matched_gist = set()
+                
+                for i, (gist_bbox, _, _) in enumerate(gist_scored):
+                    best_iou = 0.0
+                    best_j = -1
+                    for j, (det_bbox, _, _) in enumerate(detector_results):
+                        iou = bbox_iou(gist_bbox, det_bbox)
+                        if iou > best_iou:
+                            best_iou = iou
+                            best_j = j
+                    
+                    if best_iou > 0.3:  # IoU threshold for matching
+                        matched += 1
+                        matched_detector.add(best_j)
+                        matched_gist.add(i)
+                
+                gist_only = len(gist_scored) - len(matched_gist)
+                detector_only = len(detector_results) - len(matched_detector)
+                
+                # === Write CSV row ===
+                timestamp_ms = int(time.time() * 1000)
+                
+                # Write summary row
+                csv_writer.writerow({
+                    "frame_idx": frame_idx,
+                    "timestamp_ms": timestamp_ms,
+                    "gist_detections": len(gist_scored),
+                    "detector_detections": len(detector_results),
+                    "matched_detections": matched,
+                    "gist_only": gist_only,
+                    "detector_only": detector_only,
+                    "gist_bbox_x": gist_scored[0][0][0] if gist_scored else "",
+                    "gist_bbox_y": gist_scored[0][0][1] if gist_scored else "",
+                    "gist_bbox_w": gist_scored[0][0][2] if gist_scored else "",
+                    "gist_bbox_h": gist_scored[0][0][3] if gist_scored else "",
+                    "gist_score": f"{gist_scored[0][1]:.3f}" if gist_scored else "",
+                    "gist_vertices": gist_scored[0][2]["vertices"] if gist_scored else "",
+                    "detector_bbox_x": detector_results[0][0][0] if detector_results else "",
+                    "detector_bbox_y": detector_results[0][0][1] if detector_results else "",
+                    "detector_bbox_w": detector_results[0][0][2] if detector_results else "",
+                    "detector_bbox_h": detector_results[0][0][3] if detector_results else "",
+                    "detector_score": f"{detector_results[0][1]:.3f}" if detector_results else "",
+                })
+                
+                # === Visualization ===
+                # Draw gist detections in magenta
+                for approx, hull, bbox in gist_results:
+                    x, y, w, h = bbox
+                    cv2.rectangle(frame_resized, (x, y), (x + w, y + h), (255, 0, 255), 2)
+                    cv2.putText(frame_resized, "GIST", (x, y - 5),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1)
+                    # Draw convex hull
+                    cv2.drawContours(frame_resized, [hull], 0, (255, 0, 255), 1)
+                
+                # Draw standard detector detections in cyan
+                for (det_bbox, det_score, _) in detector_results:
+                    x, y, w, h = det_bbox
+                    cv2.rectangle(frame_resized, (x, y), (x + w, y + h), (255, 255, 0), 2)
+                    cv2.putText(frame_resized, f"DET {det_score:.2f}", (x, y - 5),
+                               cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
+                
+                # Draw tracks using visualizer
+                frame_vis = visualizer.draw(frame_resized, tracker.tracks, rejects, fps_avg)
+                
+                # Add info overlay
+                cv2.putText(frame_vis, f"Frame: {frame_idx}/{total_frames}", (10, 30),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                cv2.putText(frame_vis, f"Gist: {len(gist_scored)} | Detector: {len(detector_results)} | Matched: {matched}",
+                           (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+                
+                mode_text = "EXPERIMENTAL MODE" if args.use_gist_acceptance else "VALIDATION MODE"
+                cv2.putText(frame_vis, mode_text, (10, 90),
+                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                
+                # Show windows if enabled
+                if config["debug"]["show_windows"]:
+                    cv2.imshow("Gist Test Runner", frame_vis)
+                    cv2.imshow("Mask", mask)
+                    
+                    key = cv2.waitKey(1) & 0xFF
+                    if key == ord('q'):
+                        logger.info("User requested quit")
+                        break
+                    elif key == ord(' '):
+                        logger.info("Paused - press any key to continue")
+                        cv2.waitKey(0)
+                
+                # Update FPS
+                frame_idx += 1
+                elapsed = time.time() - start_time
+                fps_avg = frame_idx / elapsed if elapsed > 0 else 0.0
+                
+                # Progress log every 30 frames
+                if frame_idx % 30 == 0:
+                    logger.info("Frame %d/%d (%.1f fps) - Gist: %d, Detector: %d, Matched: %d",
+                               frame_idx, total_frames, fps_avg, len(gist_scored), 
+                               len(detector_results), matched)
+        finally:
+            # Ensure cleanup happens even on exception
+            cap.release()
+            csv_file.close()
+            cv2.destroyAllWindows()
         
         # Final statistics
         logger.info("=" * 70)

@@ -107,8 +107,54 @@ def demo_gist_pipeline_on_synthetic():
     print("Demo 2: GistPipeline on Synthetic Frames")
     print("=" * 70)
     
-    # Load config
-    config = load_config("cone_config.yaml")
+    # Load config with error handling
+    try:
+        config = load_config("cone_config.yaml")
+    except Exception as e:
+        print(f"⚠ Warning: Could not load cone_config.yaml ({e}), using defaults")
+        # Minimal config for demo
+        config = {
+            "camera": {"process_width": 960, "process_height": 540},
+            "debug": {"show_windows": False},
+            "hsv_orange": {
+                "low_1": [0, 90, 90],
+                "high_1": [28, 255, 255],
+                "low_2": [160, 90, 80],
+                "high_2": [179, 255, 255],
+            },
+            "morphology": {
+                "kernel_open": 3,
+                "kernel_close": 7,
+                "open_iterations": 1,
+                "close_iterations": 1,
+            },
+            "clahe": {"clip_limit": 1.8, "tile_grid_size": [8, 8]},
+            "color": {},
+            "geometry": {
+                "min_group_area": 1400,
+                "max_group_area": 450000,
+                "aspect_min": 1.0,
+                "aspect_max": 6.0,
+                "profile_slices": 10,
+                "min_profile_score": 0.35,
+                "min_fill_ratio": 0.08,
+                "max_fill_ratio": 0.65,
+                "min_frame_score": 0.35,
+            },
+            "grouping": {
+                "min_part_area": 80,
+                "max_y_gap": 80,
+                "min_x_overlap_ratio": 0.20,
+                "max_x_center_diff": 80,
+                "pad_x": 8,
+                "pad_y": 12,
+            },
+            "weights": {
+                "profile": 0.50,
+                "fill": 0.35,
+                "aspect": 0.15,
+            },
+        }
     
     # Initialize detector and gist pipeline
     detector = ConeDetector(config)
