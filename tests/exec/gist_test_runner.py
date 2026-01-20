@@ -21,7 +21,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import cv2
 import numpy as np
@@ -35,6 +35,7 @@ from cone_tracker.tracker import MultiConeTracker
 from cone_tracker.visualizer import Visualizer
 
 logger = logging.getLogger(__name__)
+IOU_HIST_BINS = 10
 
 
 def convex_hull_pointing_up(
@@ -335,19 +336,88 @@ def setup_csv_output(output_dir: str) -> Tuple[str, csv.DictWriter, Any]:
     return csv_path, writer, csv_file
 
 
-def bbox_iou(bbox1: Tuple[int, int, int, int], bbox2: Tuple[int, int, int, int]) -> float:
+def setup_iou_histogram_csv(output_path: str) -> Tuple[csv.writer, Any]:
+    """Setup CSV output for per-frame IoU histogram."""
+    output_dir = os.path.dirname(output_path)
+    if output_dir:
+        os.makedirs(output_dir, exist_ok=True)
+    hist_file = None
+    try:
+        hist_file = open(output_path, "w", newline="")
+        writer = csv.writer(hist_file)
+    header = ["frame_idx"] + [
+        f"bin_{i/IOU_HIST_BINS:.1f}_{(i + 1)/IOU_HIST_BINS:.1f}" for i in range(IOU_HIST_BINS)
+    ]
+        writer.writerow(header)
+        logger.info("IoU histogram CSV output: %s", output_path)
+        return writer, hist_file
+    except Exception:
+        if hist_file is not None:
+            hist_file.close()
+        raise
+
+
+def compute_processing_resolution(
+    config: Dict[str, Any],
+    frame_w: int,
+    frame_h: int
+) -> Tuple[int, int, Optional[Tuple[int, int]]]:
+    """Compute processing resolution without upscaling."""
+    process_w = int(config["camera"]["process_width"])
+    process_h = int(config["camera"]["process_height"])
+
+    if frame_w > 0 and frame_h > 0:
+        target_w = min(process_w, frame_w)
+        scale = target_w / frame_w
+        target_h = int(round(frame_h * scale))
+        target_h = max(1, min(target_h, frame_h))
+        return target_w, target_h, (frame_w, frame_h)
+
+    return process_w, process_h, None
+
+
+def clip_bbox(
+    bbox: Tuple[int, int, int, int],
+    frame_shape: Tuple[int, int, int]
+) -> Tuple[int, int, int, int]:
+    """Clip bounding box to frame bounds and normalize to ints."""
+    height, width = frame_shape[:2]
+    if width <= 0 or height <= 0:
+        return (0, 0, 0, 0)
+    
+    x, y, w, h = (int(round(v)) for v in bbox)
+    x = max(0, min(x, width))
+    y = max(0, min(y, height))
+    w = max(0, min(w, width - x))
+    h = max(0, min(h, height - y))
+    return (x, y, w, h)
+
+
+def build_gist_feed_detections(
+    gist_scored: List[Tuple[Tuple[int, int, int, int], float, Dict[str, Any]]],
+    frame_shape: Tuple[int, int, int]
+) -> List[Tuple[Tuple[int, int, int, int], float, Dict[str, Any]]]:
+    """Build gist detections for tracker ingestion."""
+    feed = []
+    for bbox, score, _meta in gist_scored:
+        clipped = clip_bbox(bbox, frame_shape)
+        feed.append((clipped, float(score), {}))
+    return feed
+
+
+def iou(boxA: Tuple[int, int, int, int], boxB: Tuple[int, int, int, int]) -> float:
     """
     Compute Intersection over Union (IoU) between two bounding boxes.
     
     Args:
-        bbox1: First bbox (x, y, w, h)
-        bbox2: Second bbox (x, y, w, h)
+        boxA: First bbox (x, y, w, h)
+        boxB: Second bbox (x, y, w, h)
         
     Returns:
         IoU score in [0, 1]
     """
-    x1, y1, w1, h1 = bbox1
-    x2, y2, w2, h2 = bbox2
+    x1, y1, w1, h1 = boxA
+    x2, y2, w2, h2 = boxB
     
     # Convert to (x1, y1, x2, y2) format
     x1_max = x1 + w1
@@ -415,6 +485,23 @@ def main():
         default=None,
         help="Maximum number of frames to process (default: all frames)"
     )
+    parser.add_argument(
+        "--iou-threshold",
+        type=float,
+        default=0.3,
+        help="IoU threshold for matching detections (default: 0.3)"
+    )
+    parser.add_argument(
+        "--iou-hist-csv",
+        type=str,
+        default=None,
+        help="Optional CSV path for per-frame IoU histogram output"
+    )
+    parser.add_argument(
+        "--unit",
+        action="store_true",
+        help="Unit mode: limit to 5 frames and disable visualization windows"
+    )
     
     args = parser.parse_args()
     
@@ -443,6 +530,11 @@ def main():
         # Override show_windows if requested
         if args.show_windows:
             config["debug"]["show_windows"] = True
+
+        if args.unit:
+            args.max_frames = 5
+            config["debug"]["show_windows"] = False
+            logger.info("Unit mode enabled: max_frames=5, show_windows disabled")
         
         # Initialize components
         logger.info("Initializing ConeDetector, MultiConeTracker, Visualizer...")
@@ -468,12 +560,22 @@ def main():
                    frame_w, frame_h, fps_source, total_frames)
         
         # Get processing resolution
-        process_w = config["camera"]["process_width"]
-        process_h = config["camera"]["process_height"]
-        logger.info("Processing resolution: %dx%d", process_w, process_h)
-        
+        process_w, process_h, source_dims = compute_processing_resolution(
+            config, frame_w, frame_h
+        )
+        if source_dims:
+            logger.info("Processing resolution: %dx%d (source %dx%d)",
+                        process_w, process_h, source_dims[0], source_dims[1])
+        else:
+            logger.info("Processing resolution: %dx%d (source unknown, using config)",
+                        process_w, process_h)
+
         # Setup CSV output
         csv_path, csv_writer, csv_file = setup_csv_output(args.output_dir)
+        iou_hist_writer = None
+        iou_hist_file = None
+        if args.iou_hist_csv:
+            iou_hist_writer, iou_hist_file = setup_iou_histogram_csv(args.iou_hist_csv)
         
         # Processing loop
         frame_idx = 0
@@ -497,14 +599,22 @@ def main():
                     break
                 
                 # Resize frame to processing resolution
-                frame_resized = cv2.resize(frame, (process_w, process_h))
+                if frame.shape[1] == process_w and frame.shape[0] == process_h:
+                    frame_resized = frame
+                else:
+                    frame_resized = cv2.resize(frame, (process_w, process_h))
                 
                 # === Standard Detector Pipeline ===
                 hsv = detector.preprocess(frame_resized)
                 mask = detector.get_mask(frame_resized, hsv)
                 
                 # Run standard detector
-                detector_results, _, rejects = detector.detect(frame_resized)
+                try:
+                    detector_results, _, rejects = detector.detect(frame_resized)
+                except Exception as exc:
+                    logger.exception("Detector detect failed at frame %d: %s", frame_idx, exc)
+                    detector_results = []
+                    rejects = []
                 
                 # === Gist Pipeline on same mask ===
                 gist_results = gist_pipeline.process_mask(mask)
@@ -515,16 +625,21 @@ def main():
                     score = gist_pipeline.compute_gist_score(approx, hull, bbox)
                     gist_scored.append((bbox, score, {"approx": approx, "hull": hull, "vertices": len(approx)}))
                 
+                gist_feed = build_gist_feed_detections(gist_scored, frame_resized.shape)
+
                 # === Decide which detections to track ===
                 if args.use_gist_acceptance:
                     # EXPERIMENTAL: Use gist detections for tracking
-                    tracking_input = gist_scored
+                    tracking_input = gist_feed
                 else:
                     # VALIDATION: Use detector detections for tracking
                     tracking_input = detector_results
                 
                 # Update tracker
-                tracker.update(tracking_input)
+                try:
+                    tracker.update(tracking_input)
+                except Exception as exc:
+                    logger.exception("Tracker update failed at frame %d: %s", frame_idx, exc)
                 
                 # === Analysis: Compare gist vs detector ===
                 matched = 0
@@ -535,22 +650,32 @@ def main():
                 matched_detector = set()
                 matched_gist = set()
                 
-                for i, (gist_bbox, _, _) in enumerate(gist_scored):
+                for i, (gist_bbox, _, _) in enumerate(gist_feed):
                     best_iou = 0.0
                     best_j = -1
                     for j, (det_bbox, _, _) in enumerate(detector_results):
-                        iou = bbox_iou(gist_bbox, det_bbox)
-                        if iou > best_iou:
-                            best_iou = iou
+                        iou_score = iou(gist_bbox, det_bbox)
+                        if iou_score > best_iou:
+                            best_iou = iou_score
                             best_j = j
                     
-                    if best_iou > 0.3:  # IoU threshold for matching
+                    if best_iou >= args.iou_threshold:
                         matched += 1
                         matched_detector.add(best_j)
                         matched_gist.add(i)
                 
-                gist_only = len(gist_scored) - len(matched_gist)
+                gist_only = len(gist_feed) - len(matched_gist)
                 detector_only = len(detector_results) - len(matched_detector)
+
+                if iou_hist_writer is not None:
+                    # Expected small detection counts; pairwise IoU is sufficient.
+                    hist_counts = [0] * IOU_HIST_BINS
+                    for gist_bbox, _, _ in gist_feed:
+                        for det_bbox, _, _ in detector_results:
+                            iou_score = iou(gist_bbox, det_bbox)
+                            bin_idx = min(int(iou_score * IOU_HIST_BINS), IOU_HIST_BINS - 1)
+                            hist_counts[bin_idx] += 1
+                    iou_hist_writer.writerow([frame_idx] + hist_counts)
                 
                 # === Write CSV row ===
                 timestamp_ms = int(time.time() * 1000)
@@ -559,15 +684,15 @@ def main():
                 csv_writer.writerow({
                     "frame_idx": frame_idx,
                     "timestamp_ms": timestamp_ms,
-                    "gist_detections": len(gist_scored),
+                    "gist_detections": len(gist_feed),
                     "detector_detections": len(detector_results),
                     "matched_detections": matched,
                     "gist_only": gist_only,
                     "detector_only": detector_only,
-                    "gist_bbox_x": gist_scored[0][0][0] if gist_scored else "",
-                    "gist_bbox_y": gist_scored[0][0][1] if gist_scored else "",
-                    "gist_bbox_w": gist_scored[0][0][2] if gist_scored else "",
-                    "gist_bbox_h": gist_scored[0][0][3] if gist_scored else "",
+                    "gist_bbox_x": gist_feed[0][0][0] if gist_feed else "",
+                    "gist_bbox_y": gist_feed[0][0][1] if gist_feed else "",
+                    "gist_bbox_w": gist_feed[0][0][2] if gist_feed else "",
+                    "gist_bbox_h": gist_feed[0][0][3] if gist_feed else "",
                     "gist_score": f"{gist_scored[0][1]:.3f}" if gist_scored else "",
                     "gist_vertices": gist_scored[0][2]["vertices"] if gist_scored else "",
                     "detector_bbox_x": detector_results[0][0][0] if detector_results else "",
@@ -579,8 +704,11 @@ def main():
                 
                 # === Visualization ===
                 # Draw gist detections in magenta
-                for approx, hull, bbox in gist_results:
-                    x, y, w, h = bbox
+                for idx, (approx, hull, bbox) in enumerate(gist_results):
+                    if idx < len(gist_feed):
+                        x, y, w, h = gist_feed[idx][0]
+                    else:
+                        x, y, w, h = clip_bbox(bbox, frame_resized.shape)
                     cv2.rectangle(frame_resized, (x, y), (x + w, y + h), (255, 0, 255), 2)
                     cv2.putText(frame_resized, "GIST", (x, y - 5),
                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 1)
@@ -595,12 +723,16 @@ def main():
                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 0), 1)
                 
                 # Draw tracks using visualizer
-                frame_vis = visualizer.draw(frame_resized, tracker.tracks, rejects, fps_avg)
+                try:
+                    frame_vis = visualizer.draw(frame_resized, tracker.tracks, rejects, fps_avg)
+                except Exception as exc:
+                    logger.exception("Visualizer draw failed at frame %d: %s", frame_idx, exc)
+                    frame_vis = frame_resized
                 
                 # Add info overlay
                 cv2.putText(frame_vis, f"Frame: {frame_idx}/{total_frames}", (10, 30),
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-                cv2.putText(frame_vis, f"Gist: {len(gist_scored)} | Detector: {len(detector_results)} | Matched: {matched}",
+                cv2.putText(frame_vis, f"Gist: {len(gist_feed)} | Detector: {len(detector_results)} | Matched: {matched}",
                            (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                 
                 mode_text = "EXPERIMENTAL MODE" if args.use_gist_acceptance else "VALIDATION MODE"
@@ -627,13 +759,19 @@ def main():
                 
                 # Progress log every 30 frames
                 if frame_idx % 30 == 0:
+                    gist_preview = [bbox for bbox, _, _ in gist_feed[:3]]
+                    det_preview = [bbox for bbox, _, _ in detector_results[:3]]
+                    logger.debug("Frame %d bbox preview - Gist: %s | Detector: %s",
+                                 frame_idx, gist_preview, det_preview)
                     logger.info("Frame %d/%d (%.1f fps) - Gist: %d, Detector: %d, Matched: %d",
-                               frame_idx, total_frames, fps_avg, len(gist_scored), 
+                               frame_idx, total_frames, fps_avg, len(gist_feed),
                                len(detector_results), matched)
         finally:
             # Ensure cleanup happens even on exception
             cap.release()
             csv_file.close()
+            if iou_hist_file is not None:
+                iou_hist_file.close()
             cv2.destroyAllWindows()
         
         # Final statistics

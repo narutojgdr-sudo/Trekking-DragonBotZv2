@@ -13,7 +13,7 @@ import numpy as np
 # Add parent directory to import gist_test_runner
 sys.path.insert(0, str(Path(__file__).parent))
 
-from exec.gist_test_runner import convex_hull_pointing_up, GistPipeline
+from exec.gist_test_runner import convex_hull_pointing_up, GistPipeline, iou
 
 
 def test_convex_hull_pointing_up_valid_cone():
@@ -155,6 +155,16 @@ def test_gist_pipeline_process_mask_with_cone():
     # This is expected - the test verifies pipeline runs without errors
 
 
+def test_iou_helper():
+    """Test IoU helper with overlapping boxes."""
+    box_a = (10, 10, 20, 20)
+    box_b = (15, 15, 20, 20)
+    score = iou(box_a, box_b)
+    print(f"✓ Test 10: IoU helper -> {score:.3f}")
+    # Boxes overlap by 15x15 (IoU ~0.391)
+    assert 0.35 < score < 0.45, "IoU should reflect partial overlap"
+
+
 def run_all_tests():
     """Run all tests."""
     print("=" * 70)
@@ -171,6 +181,7 @@ def run_all_tests():
         test_gist_pipeline_initialization()
         test_gist_pipeline_process_mask_empty()
         test_gist_pipeline_process_mask_with_cone()
+        test_iou_helper()
         
         print("=" * 70)
         print("All tests passed! ✓")
