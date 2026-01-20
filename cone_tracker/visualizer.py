@@ -40,7 +40,7 @@ class Visualizer:
             if not np.any(mask):
                 return np.zeros(mask.shape, dtype=np.uint8)
             upper = float(np.max(mask))
-            scale = 255.0 if upper <= 1.0 else 1.0  # scale normalized [0..1] masks to [0..255]
+            scale = 255.0 if upper <= 1.0 + 1e-6 else 1.0  # scale normalized [0..1] masks to [0..255]
             return np.clip(mask * scale, 0, 255).astype(np.uint8)
         return mask.astype(np.uint8)
     

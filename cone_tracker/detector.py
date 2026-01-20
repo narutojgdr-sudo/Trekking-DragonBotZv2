@@ -105,7 +105,7 @@ class ConeDetector:
         # morphological cleanup
         combined = cv2.morphologyEx(combined, cv2.MORPH_OPEN, self.k_open, iterations=self.config["morphology"]["open_iterations"])
         combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, self.k_close, iterations=self.config["morphology"]["close_iterations"])
-        return (combined > 0).astype(np.uint8) * 255
+        return np.where(combined > 0, 255, 0).astype(np.uint8)
 
     def _part_boxes(self, mask: np.ndarray) -> List[Tuple[int, int, int, int]]:
         """Find part boxes from mask."""
