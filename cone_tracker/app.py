@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 import cv2
+import numpy as np
 
 from .utils import ConeState
 from .run_csv_logger import RunCSVLogger
@@ -28,6 +29,8 @@ RUN_LOG_MAX_FILENAME_ATTEMPTS = 1000
 HFOV_MIN_DEG = 10.0
 HFOV_MAX_DEG = 170.0
 HFOV_FALLBACK_DEG = 70.0
+MIN_FRAME_BGR = (1, 1, 3)
+MIN_FRAME_GRAY = (1, 1)
 
 
 @dataclass(frozen=True)
@@ -77,6 +80,85 @@ class App:
         self.vis.source_label = self.source_label
         self.config_reload_msg = None
         self.config_reload_time = 0.0
+        self._display_ready = False
+        self._display_show_mask = False
+
+    def _ensure_display_config(self) -> None:
+        debug_cfg = self.config["debug"]
+        if not debug_cfg.get("show_windows", False):
+            debug_cfg["show_mask"] = False
+            self._display_ready = False
+            self._display_show_mask = False
+            return
+        if not os.environ.get("DISPLAY"):
+            self._log_with_source(logging.WARNING, "DISPLAY not set; disabling GUI windows")
+            debug_cfg["show_windows"] = False
+            debug_cfg["show_mask"] = False
+            self._display_ready = False
+            self._display_show_mask = False
+            return
+        self._display_ready = True
+
+    def _init_display(self) -> None:
+        self._ensure_display_config()
+        if not self._display_ready:
+            return
+        try:
+            cv2.namedWindow("Tracker", cv2.WINDOW_NORMAL)
+            if self.config["debug"].get("show_mask", False):
+                cv2.namedWindow("Mask", cv2.WINDOW_NORMAL)
+            cv2.imshow("Tracker", np.zeros(MIN_FRAME_BGR, dtype=np.uint8))
+            if self.config["debug"].get("show_mask", False):
+                cv2.imshow("Mask", np.zeros(MIN_FRAME_GRAY, dtype=np.uint8))
+            cv2.waitKey(1)
+            self._display_show_mask = self.config["debug"].get("show_mask", False)
+        except cv2.error as exc:
+            self._log_with_source(logging.WARNING, f"⚠️ Unable to initialize GUI windows: {exc}")
+            self.config["debug"]["show_windows"] = False
+            self.config["debug"]["show_mask"] = False
+            self._display_ready = False
+            self._display_show_mask = False
+
+    def _shutdown_display(self) -> None:
+        if not self._display_ready:
+            return
+        for name in ("Mask", "Tracker"):
+            try:
+                cv2.destroyWindow(name)
+            except cv2.error:
+                pass
+        self._display_ready = False
+        self._display_show_mask = False
+
+    def _refresh_display(self) -> None:
+        was_ready = self._display_ready
+        self._ensure_display_config()
+        if was_ready and not self._display_ready:
+            self._shutdown_display()
+            return
+        if self._display_ready and not was_ready:
+            self._init_display()
+            return
+        if not self._display_ready:
+            return
+        show_mask = self.config["debug"].get("show_mask", False)
+        if show_mask and not self._display_show_mask:
+            try:
+                cv2.namedWindow("Mask", cv2.WINDOW_NORMAL)
+                cv2.imshow("Mask", np.zeros(MIN_FRAME_GRAY, dtype=np.uint8))
+                cv2.waitKey(1)
+                self._display_show_mask = True
+            except cv2.error as exc:
+                self._log_with_source(logging.WARNING, f"⚠️ Unable to show mask window: {exc}")
+                self.config["debug"]["show_windows"] = False
+                self.config["debug"]["show_mask"] = False
+                self._shutdown_display()
+        elif not show_mask and self._display_show_mask:
+            try:
+                cv2.destroyWindow("Mask")
+            except cv2.error:
+                pass
+            self._display_show_mask = False
 
     def _resolve_source(self, config) -> SourceInfo:
         cam = config["camera"]
@@ -173,6 +255,7 @@ class App:
         self.tracker = MultiConeTracker(self.config)
         self.vis = Visualizer(self.config)
         self.vis.source_label = self.source_label
+        self._refresh_display()
         self.config_reload_msg = "⚙️ Config recarregada!"
         self.config_reload_time = time.time()
         self._log_with_source(logging.INFO, "✅ Configuração recarregada com sucesso!")
@@ -279,6 +362,7 @@ class App:
             self.csv_logger.open_if_enabled(self.config, self.source_label, self.run_start_ts)
         except Exception as exc:
             self._log_with_source(logging.WARNING, f"⚠️ Failed to init CSV export: {exc}")
+        self._init_display()
 
         t_last = time.time()
         fail_count = 0
@@ -434,10 +518,7 @@ class App:
 
                 if self.config["debug"]["show_windows"]:
                     try:
-                        cv2.imshow("Tracker", out)
-                        if self.config["debug"]["show_mask"]:
-                            cv2.imshow("Mask", mask)
-
+                        self.vis.show(out, mask, self.config["debug"].get("show_mask", False))
                         k = cv2.waitKey(1) & 0xFF
                         if k == ord("q"):
                             break
@@ -450,6 +531,10 @@ class App:
                         self._log_with_source(logging.INFO, "💡 Dica: Desabilite 'show_windows' no config ou use 'output_video_path'")
                         # Continue processing but stop trying to show windows
                         self.config["debug"]["show_windows"] = False
+                        self.config["debug"]["show_mask"] = False
+                        self._shutdown_display()
+                elif self._display_ready:
+                    self._shutdown_display()
 
                 if using_video and self._playback_frame_duration:
                     target_time = self._playback_start_ts + (self.frame_idx + 1) * self._playback_frame_duration
@@ -480,6 +565,6 @@ class App:
                 except Exception:
                     self._log_with_source(logging.WARNING, "⚠️ Failed to close CSV export")
             try:
-                cv2.destroyAllWindows()
+                self._shutdown_display()
             except (cv2.error, Exception):
                 pass  # Ignorar se GUI não estiver disponível

@@ -16,6 +16,7 @@ from .utils import ConeState
 class Visualizer:
     """Visualize cone detection and tracking results."""
     
+    MASK_NORMALIZED_EPS = 1e-3
     COLORS = [
         (0, 255, 0), (0, 200, 255), (255, 0, 0), (255, 255, 0),
         (255, 0, 255), (0, 255, 255), (180, 180, 0), (0, 180, 180),
@@ -29,6 +30,21 @@ class Visualizer:
     def _color(self, track_id: int) -> Tuple[int, int, int]:
         """Get color for track ID."""
         return self.COLORS[track_id % len(self.COLORS)]
+
+    @classmethod
+    def _normalize_mask(cls, mask: np.ndarray) -> np.ndarray:
+        if mask.dtype == np.bool_:
+            return mask.astype(np.uint8) * 255
+        if mask.dtype == np.uint8:
+            return mask
+        if np.issubdtype(mask.dtype, np.floating):
+            if not np.any(mask > 0):
+                return np.zeros(mask.shape, dtype=np.uint8)
+            upper = float(np.max(mask))
+            is_normalized = upper <= 1.0 + cls.MASK_NORMALIZED_EPS
+            scale = 255.0 if is_normalized else 1.0  # scale normalized [0..1] masks to [0..255]
+            return np.clip(mask * scale, 0, 255).astype(np.uint8)
+        return mask.astype(np.uint8)
     
     def _compute_heading_info(self, track: Track, frame_w: int) -> Tuple[str, float]:
         """
@@ -172,3 +188,8 @@ class Visualizer:
                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
 
         return frame
+
+    def show(self, frame: np.ndarray, mask: np.ndarray, show_mask: bool) -> None:
+        cv2.imshow("Tracker", frame)
+        if show_mask and mask is not None:
+            cv2.imshow("Mask", self._normalize_mask(mask))
