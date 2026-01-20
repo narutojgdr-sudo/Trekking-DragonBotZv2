@@ -79,18 +79,21 @@ class App:
         self.config_reload_msg = None
         self.config_reload_time = 0.0
         self._display_ready = False
+        self._display_show_mask = False
 
     def _ensure_display_config(self) -> None:
         debug_cfg = self.config["debug"]
         if not debug_cfg.get("show_windows", False):
             debug_cfg["show_mask"] = False
             self._display_ready = False
+            self._display_show_mask = False
             return
         if os.environ.get("DISPLAY") in (None, ""):
             self._log_with_source(logging.WARNING, "DISPLAY not set; disabling GUI windows")
             debug_cfg["show_windows"] = False
             debug_cfg["show_mask"] = False
             self._display_ready = False
+            self._display_show_mask = False
             return
         self._display_ready = True
 
@@ -106,11 +109,13 @@ class App:
             if self.config["debug"].get("show_mask", False):
                 cv2.imshow("Mask", np.zeros((1, 1), dtype=np.uint8))
             cv2.waitKey(1)
+            self._display_show_mask = self.config["debug"].get("show_mask", False)
         except cv2.error as exc:
             self._log_with_source(logging.WARNING, f"⚠️ Não foi possível inicializar janelas GUI: {exc}")
             self.config["debug"]["show_windows"] = False
             self.config["debug"]["show_mask"] = False
             self._display_ready = False
+            self._display_show_mask = False
 
     def _shutdown_display(self) -> None:
         if not self._display_ready:
@@ -121,14 +126,37 @@ class App:
             except (cv2.error, Exception):
                 pass
         self._display_ready = False
+        self._display_show_mask = False
 
     def _refresh_display(self) -> None:
         was_ready = self._display_ready
         self._ensure_display_config()
         if was_ready and not self._display_ready:
             self._shutdown_display()
-        elif self._display_ready and not was_ready:
+            return
+        if self._display_ready and not was_ready:
             self._init_display()
+            return
+        if not self._display_ready:
+            return
+        show_mask = self.config["debug"].get("show_mask", False)
+        if show_mask and not self._display_show_mask:
+            try:
+                cv2.namedWindow("Mask", cv2.WINDOW_NORMAL)
+                cv2.imshow("Mask", np.zeros((1, 1), dtype=np.uint8))
+                cv2.waitKey(1)
+                self._display_show_mask = True
+            except cv2.error as exc:
+                self._log_with_source(logging.WARNING, f"⚠️ Não foi possível mostrar janela de máscara: {exc}")
+                self.config["debug"]["show_windows"] = False
+                self.config["debug"]["show_mask"] = False
+                self._shutdown_display()
+        elif not show_mask and self._display_show_mask:
+            try:
+                cv2.destroyWindow("Mask")
+            except (cv2.error, Exception):
+                pass
+            self._display_show_mask = False
 
     def _resolve_source(self, config) -> SourceInfo:
         cam = config["camera"]

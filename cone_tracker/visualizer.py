@@ -37,7 +37,9 @@ class Visualizer:
         if mask.dtype == np.uint8:
             return mask
         if np.issubdtype(mask.dtype, np.floating):
-            return np.clip(mask * 255 if mask.max() <= 1.0 else mask, 0, 255).astype(np.uint8)
+            upper = float(np.nanmax(mask))
+            scale = 255.0 if upper <= 1.0 else 1.0
+            return np.clip(mask * scale, 0, 255).astype(np.uint8)
         return mask.astype(np.uint8)
     
     def _compute_heading_info(self, track: Track, frame_w: int) -> Tuple[str, float]:

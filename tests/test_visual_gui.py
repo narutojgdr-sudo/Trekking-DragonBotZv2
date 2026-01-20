@@ -49,7 +49,8 @@ def test_gui_init_and_waitkey_called():
         app.run()
 
     assert named_window.call_count >= 2
-    imshow.assert_any_call("Tracker", frame[:1, :1])
+    tracker_calls = [args for args, _ in imshow.call_args_list if args and args[0] == "Tracker"]
+    assert any(call_args[1].shape == (1, 1, 3) for call_args in tracker_calls)
     wait_key.assert_called()
 
 
