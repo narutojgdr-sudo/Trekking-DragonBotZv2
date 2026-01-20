@@ -22,6 +22,7 @@ The script is designed to **complement** (not replace) the existing cone detecti
 ✅ **CSV export**: Frame-by-frame comparison data in `logs/gist_test/`  
 ✅ **Visualization**: Color-coded overlays (Magenta=Gist, Cyan=Detector, Green/Yellow=Tracks)  
 ✅ **Configurable**: Uses `cone_config.yaml` settings  
+✅ **No upscaling**: Processing resolution never exceeds source video size  
 
 ## Installation
 
@@ -81,6 +82,30 @@ Process only first N frames (useful for quick testing):
 python3 tests/exec/gist_test_runner.py --video path/to/video.mp4 --max-frames 300
 ```
 
+### IoU Threshold
+
+Control the IoU threshold used for matching:
+
+```bash
+python3 tests/exec/gist_test_runner.py --video path/to/video.mp4 --iou-threshold 0.4
+```
+
+### IoU Histogram CSV
+
+Write per-frame IoU histogram bins (0.0-1.0 in 0.1 steps) to CSV:
+
+```bash
+python3 tests/exec/gist_test_runner.py --video path/to/video.mp4 --iou-hist-csv logs/gist_iou_hist.csv
+```
+
+### Unit Mode
+
+Run a CI-friendly short pass (forces max 5 frames and disables windows):
+
+```bash
+python3 tests/exec/gist_test_runner.py --video path/to/video.mp4 --unit
+```
+
 ### Custom Output Directory
 
 Specify CSV output directory:
@@ -95,6 +120,9 @@ python3 tests/exec/gist_test_runner.py --video path/to/video.mp4 --output-dir my
 usage: gist_test_runner.py [-h] [--video VIDEO] [--config CONFIG] 
                            [--use-gist-acceptance] [--output-dir OUTPUT_DIR]
                            [--show-windows] [--max-frames MAX_FRAMES]
+                           [--iou-threshold IOU_THRESHOLD]
+                           [--iou-hist-csv IOU_HIST_CSV]
+                           [--unit]
 
 options:
   --video VIDEO               Path to video file (overrides cone_config.yaml)
@@ -103,6 +131,11 @@ options:
   --output-dir OUTPUT_DIR     CSV output directory (default: logs/gist_test)
   --show-windows              Show visualization windows (overrides config)
   --max-frames MAX_FRAMES     Maximum frames to process (default: all)
+  --iou-threshold IOU_THRESHOLD
+                              IoU threshold for matching detections (default: 0.3)
+  --iou-hist-csv IOU_HIST_CSV
+                              Optional CSV path for per-frame IoU histogram output
+  --unit                      Unit mode: limit to 5 frames and disable visualization windows
 ```
 
 ## Pipeline Details
@@ -153,7 +186,7 @@ The CSV file contains frame-by-frame comparison data:
 | `timestamp_ms` | Wall clock timestamp in milliseconds |
 | `gist_detections` | Number of gist detections |
 | `detector_detections` | Number of standard detector detections |
-| `matched_detections` | Number of detections matched by IoU > 0.3 |
+| `matched_detections` | Number of detections matched by IoU >= threshold |
 | `gist_only` | Gist detections not matched by detector |
 | `detector_only` | Detector detections not matched by gist |
 | `gist_bbox_*` | Bounding box of first gist detection (x, y, w, h) |
