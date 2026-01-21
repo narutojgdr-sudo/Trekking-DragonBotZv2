@@ -29,7 +29,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "debug": {
         "show_windows": True,
         "show_mask": True,
-        "show_rejection_reason": False,
+        "show_rejection_reason": True,  # Enable detailed rejection reasons by default
         "draw_suspects": False,     # if True, draws SUSPECT in yellow as well
         "show_groups": False,
         "log_rejections": False,    # Log rejections to console
@@ -47,6 +47,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "filename_pattern": "run_{source}_{start_ts}.csv",
             "flush_every_frames": 10,
         },
+        # Reasons logging and detailed .txt report generation
+        "log_reasons": True,  # Enable detailed reasons logging (confirmations/rejections/suspects)
+        "reasons_txt_enabled": True,  # Generate detailed .txt report by default
+        "reasons_txt_path": "./reasons_{timestamp}.txt",  # Default path for reasons report (repo root)
     },
     "hsv_orange": {
         "low_1": [0, 90, 90],

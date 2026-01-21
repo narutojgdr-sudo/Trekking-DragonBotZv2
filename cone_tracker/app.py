@@ -18,6 +18,7 @@ from .config import load_config, save_config, watch_config
 from .detector import ConeDetector
 from .tracker import MultiConeTracker
 from .visualizer import Visualizer
+from .reasons_writer import ReasonsWriter
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,7 @@ class App:
         self.run_start_ts = None
         self.frame_idx = 0
         self.csv_logger = RunCSVLogger()
+        self.reasons_writer = None  # Initialize reasons writer if enabled
         self._video_ts_fallback_logged = False
         self._playback_start_ts = None
         self._playback_frame_duration = None
@@ -356,6 +358,14 @@ class App:
 
         self.frame_idx = 0
         self.run_start_ts = self._iso_timestamp()
+        
+        # Initialize reasons writer if enabled
+        if self.config["debug"].get("reasons_txt_enabled", False):
+            self.reasons_writer = ReasonsWriter()
+            self.reasons_writer.set_start_timestamp(self.run_start_ts)
+            self.reasons_writer.set_config_summary(self.config)
+            self._log_with_source(logging.INFO, "📝 Reasons .txt report generation enabled")
+        
         if self.config["debug"].get("export_run_log", False):
             self._init_run_log()
         try:
@@ -420,6 +430,29 @@ class App:
                         self._log_with_source(logging.INFO, f"   ✗ {reason}")
                 
                 self.tracker.update(detections)
+                
+                # Collect reasons data if enabled
+                if self.reasons_writer:
+                    # Collect track states
+                    confirmed_ids = [t.track_id for t in self.tracker.tracks if t.state == ConeState.CONFIRMED]
+                    suspect_ids = [t.track_id for t in self.tracker.tracks if t.state == ConeState.SUSPECT]
+                    track_states = {
+                        "confirmed_ids": confirmed_ids,
+                        "suspect_ids": suspect_ids,
+                    }
+                    
+                    # Tracker events (note: tracker doesn't expose these directly)
+                    tracker_events = {"confirmed": [], "deleted": []}
+                    
+                    self.reasons_writer.add_frame_data(
+                        frame_idx=self.frame_idx,
+                        timestamp_ms=ts_source_ms if 'ts_source_ms' in locals() else int(time.time() * 1000),
+                        detections=detections,
+                        rejects=rejects,
+                        gist_candidates=None,  # Not available in App
+                        tracker_events=tracker_events,
+                        track_states=track_states,
+                    )
                 
                 # Debug print heading info for confirmed tracks
                 tracks_for_control = self.tracker.confirmed_tracks()
@@ -564,6 +597,24 @@ class App:
                         self._log_with_source(logging.INFO, f"✅ CSV exported to: {self.csv_logger.csv_path}")
                 except Exception:
                     self._log_with_source(logging.WARNING, "⚠️ Failed to close CSV export")
+            
+            # Write reasons report if enabled
+            if self.reasons_writer:
+                try:
+                    reasons_txt_path = self.config["debug"].get("reasons_txt_path", "./reasons_{timestamp}.txt")
+                    # Replace {timestamp} placeholder
+                    safe_ts = self._sanitize_timestamp(self.run_start_ts)
+                    reasons_txt_path = reasons_txt_path.replace("{timestamp}", safe_ts)
+                    
+                    self.reasons_writer.write_report(
+                        output_path=reasons_txt_path,
+                        csv_path=self.csv_logger.csv_path if self.csv_logger.enabled else None,
+                        iou_hist_path=None,
+                    )
+                    self._log_with_source(logging.INFO, f"✅ Reasons report exported to: {reasons_txt_path}")
+                except Exception as exc:
+                    self._log_with_source(logging.WARNING, f"⚠️ Failed to write reasons report: {exc}")
+            
             try:
                 self._shutdown_display()
             except (cv2.error, Exception):
