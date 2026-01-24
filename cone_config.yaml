@@ -5,7 +5,7 @@
 # Camera/Video Input Configuration
 camera:
   # Path to your MP4 video file (update this to point to your video)
-  video_path: "videos/input.mp4"
+  video_path: ""
   
   # Path to save processed output video (leave empty to not save)
   output_video_path: ""
