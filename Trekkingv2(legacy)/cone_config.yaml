@@ -11,7 +11,7 @@ camera:
   output_video_path: ""
   
   # Camera index (only used if video_path is empty or file not found)
-  index: 0
+  index: 
   
   # Processing resolution - frames are resized to this resolution
   # These values balance performance and detection quality for typical videos
