@@ -5,7 +5,7 @@ import os
 
 # ============= Config =============
 MODEL_PATH = "coneslayer-simplified.onnx"
-IMAGE_PATH = "image.png"          # <-- pode ser imagem OU pasta
+IMAGE_PATH = "dataset"          # <-- pode ser imagem OU pasta
 OUTPUT_DIR = "outputs"         # usado quando IMAGE_PATH é pasta
 OUTPUT_SINGLE = "output.png"   # usado quando IMAGE_PATH é arquivo
 
