@@ -4,14 +4,14 @@ import onnxruntime as ort
 import os
 
 # ============= Config =============
-MODEL_PATH = "coneslayer-simplified.onnx"
+MODEL_PATH = "best.onnx"
 IMAGE_PATH = "dataset"          # <-- pode ser imagem OU pasta
 OUTPUT_DIR = "outputs"         # usado quando IMAGE_PATH é pasta
 OUTPUT_SINGLE = "output.png"   # usado quando IMAGE_PATH é arquivo
 
 CONF_THRESHOLD = 0.3
 IOU_THRESHOLD = 0.3
-INPUT_W, INPUT_H = 416, 416
+INPUT_W, INPUT_H = 320, 320
 # ==================================
 
 
